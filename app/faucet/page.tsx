@@ -8,6 +8,7 @@ import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { parseUnits, formatUnits, type Address } from "viem";
 import { arbitrumSepolia } from "wagmi/chains";
 import { mockErc20Abi } from "@/lib/abis/mock-erc20-abi";
+import TokenIcon from "@/components/TokenIcon";
 
 const FAUCET_TOKENS = [
   {
@@ -206,12 +207,7 @@ export default function FaucetPage() {
                     {/* Token */}
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
-                        <div
-                          className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center text-white text-xs font-bold"
-                          style={{ backgroundColor: token.color }}
-                        >
-                          {token.symbol.charAt(0)}
-                        </div>
+                        <TokenIcon symbol={token.symbol} color={token.color} size={32} />
                         <div>
                           <div className="text-sm font-medium text-[var(--text-primary)]">{token.symbol}</div>
                           <div className="text-xs text-[var(--text-tertiary)]">{token.name}</div>
