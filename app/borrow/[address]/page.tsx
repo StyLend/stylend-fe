@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
+import Image from "next/image";
 import {
   useAccount,
   useReadContract,
@@ -10,7 +11,7 @@ import {
   useWriteContract,
   useWaitForTransactionReceipt,
 } from "wagmi";
-import { parseUnits, formatUnits, maxUint256 } from "viem";
+import { parseUnits, formatUnits, maxUint256, encodePacked } from "viem";
 import TokenIcon from "@/components/TokenIcon";
 import { lendingPoolAbi } from "@/lib/abis/lending-pool-abi";
 import { lendingPoolRouterAbi } from "@/lib/abis/lending-pool-router-abi";
@@ -18,8 +19,27 @@ import { lendingPoolFactoryAbi } from "@/lib/abis/lending-pool-factory-abi";
 import { interestRateModelAbi } from "@/lib/abis/interest-rate-model-abi";
 import { mockErc20Abi } from "@/lib/abis/mock-erc20-abi";
 import { tokenDataStreamAbi } from "@/lib/abis/token-data-stream-abi";
-import { CHAIN } from "@/lib/contracts";
+import { multicallAbi } from "@/lib/abis/multicall-abi";
+import { oftAdapterAbi } from "@/lib/abis/oft-adapter-abi";
+import { CHAIN, MULTICALL_ADDRESS } from "@/lib/contracts";
 import { gsap } from "@/hooks/useGsap";
+
+// LayerZero V3 extraOptions: executor lzReceive with 200k gas
+const LZ_GAS_OPTION = 200_000n;
+const LZ_EXTRA_OPTIONS = encodePacked(
+  ["uint16", "uint8", "uint16", "uint8", "uint128"],
+  [3, 1, 17, 1, LZ_GAS_OPTION]
+);
+
+interface DestChain {
+  name: string;
+  eid: number;
+  logo: string;
+}
+
+const DEST_CHAINS: DestChain[] = [
+  { name: "Base Sepolia", eid: 40245, logo: "/chains/base-logo.png" },
+];
 
 const TOKEN_COLORS: Record<string, string> = {
   ETH: "#627eea", WETH: "#627eea", WBTC: "#f7931a", USDC: "#2775ca",
@@ -56,11 +76,18 @@ export default function BorrowDetailPage() {
   const [sidebarTab, setSidebarTab] = useState<"collateral" | "borrow">("collateral");
   const [collateralAmount, setCollateralAmount] = useState("");
   const [borrowAmount, setBorrowAmount] = useState("");
-  const [txStep, setTxStep] = useState<"idle" | "approving" | "supplying-collateral" | "borrowing" | "success" | "error">("idle");
+  const [crossChainEnabled, setCrossChainEnabled] = useState(false);
+  const [destChain, setDestChain] = useState<DestChain | null>(null);
+  const isCrossChain = crossChainEnabled;
+  const [txStep, setTxStep] = useState<"idle" | "approving" | "supplying-collateral" | "borrowing" | "borrowing-crosschain" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [chainDropdownOpen, setChainDropdownOpen] = useState(false);
 
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
+  const collateralFormRef = useRef<HTMLDivElement>(null);
+  const borrowFormRef = useRef<HTMLDivElement>(null);
+  const chainDropdownRef = useRef<HTMLDivElement>(null);
 
   // ── Contract reads ──
 
@@ -210,6 +237,56 @@ export default function BorrowDetailPage() {
   const walletCollateralBalance = (userData?.[0]?.result as bigint) ?? 0n;
   const collateralAllowance = (userData?.[1]?.result as bigint) ?? 0n;
 
+  // ── Cross-chain borrow reads ──
+
+  // OFT adapter for the borrow token
+  const { data: oftAdapterAddr } = useReadContract({
+    address: factoryAddr,
+    abi: lendingPoolFactoryAbi,
+    functionName: "oftAddress",
+    args: [borrowTokenAddr!],
+    chainId: CHAIN.id,
+    query: { enabled: !!factoryAddr && !!borrowTokenAddr },
+  });
+
+  const oftConfigured = oftAdapterAddr && oftAdapterAddr !== "0x0000000000000000000000000000000000000000";
+
+  // Build SendParam for quote
+  const crossChainParsedAmount = useMemo(() => {
+    if (!isCrossChain || !borrowAmount || Number(borrowAmount) <= 0) return 0n;
+    try { return parseUnits(borrowAmount, borrowDecimals); } catch { return 0n; }
+  }, [isCrossChain, borrowAmount, borrowDecimals]);
+
+  const toBytes32 = useMemo((): `0x${string}` => {
+    if (!userAddress) return `0x${"0".repeat(64)}` as `0x${string}`;
+    return `0x${userAddress.slice(2).padStart(64, "0")}` as `0x${string}`;
+  }, [userAddress]);
+
+  const crossChainSendParam = useMemo(() => ({
+    dstEid: destChain?.eid ?? 0,
+    to: toBytes32,
+    amountLD: crossChainParsedAmount,
+    minAmountLD: 0n,
+    extraOptions: LZ_EXTRA_OPTIONS,
+    composeMsg: "0x" as `0x${string}`,
+    oftCmd: "0x" as `0x${string}`,
+  }), [destChain?.eid, toBytes32, crossChainParsedAmount]);
+
+  // Quote LayerZero fee
+  const { data: quoteFee } = useReadContract({
+    address: oftAdapterAddr as `0x${string}`,
+    abi: oftAdapterAbi,
+    functionName: "quoteSend",
+    args: [crossChainSendParam, false],
+    chainId: CHAIN.id,
+    query: {
+      enabled: isCrossChain && !!oftConfigured && !!destChain?.eid && crossChainParsedAmount > 0n && !!userAddress,
+    },
+  });
+
+  const lzNativeFee = (quoteFee as { nativeFee: bigint; lzTokenFee: bigint } | undefined)?.nativeFee ?? 0n;
+  const lzTokenFee = (quoteFee as { nativeFee: bigint; lzTokenFee: bigint } | undefined)?.lzTokenFee ?? 0n;
+
   // Computed
   const liquidity =
     totalSupplyAssets !== undefined && totalBorrowAssets !== undefined
@@ -287,10 +364,12 @@ export default function BorrowDetailPage() {
   const { writeContract: writeApprove, data: approveTxHash, reset: resetApprove } = useWriteContract();
   const { writeContract: writeCollateral, data: collateralTxHash, reset: resetCollateral } = useWriteContract();
   const { writeContract: writeBorrow, data: borrowTxHash, reset: resetBorrow } = useWriteContract();
+  const { writeContract: writeCrossChain, data: crossChainTxHash, reset: resetCrossChain } = useWriteContract();
 
   const { isSuccess: approveConfirmed } = useWaitForTransactionReceipt({ hash: approveTxHash });
   const { isSuccess: collateralConfirmed } = useWaitForTransactionReceipt({ hash: collateralTxHash });
   const { isSuccess: borrowConfirmed } = useWaitForTransactionReceipt({ hash: borrowTxHash });
+  const { isSuccess: crossChainConfirmed, isLoading: crossChainConfirming } = useWaitForTransactionReceipt({ hash: crossChainTxHash });
 
   // Supply collateral tx
   const doSupplyCollateralTx = useCallback(() => {
@@ -340,6 +419,17 @@ export default function BorrowDetailPage() {
       refetchCollateral();
     }
   }, [borrowConfirmed, txStep, refetchRouter, refetchUser, refetchCollateral]);
+
+  // After cross-chain borrow confirmed
+  useEffect(() => {
+    if (crossChainConfirmed && txStep === "borrowing-crosschain") {
+      setTxStep("success");
+      setBorrowAmount("");
+      refetchRouter();
+      refetchUser();
+      refetchCollateral();
+    }
+  }, [crossChainConfirmed, txStep, refetchRouter, refetchUser, refetchCollateral]);
 
   const handleSupplyCollateral = () => {
     if (!userAddress || !collateralTokenAddr || !collateralAmount) return;
@@ -408,12 +498,62 @@ export default function BorrowDetailPage() {
     );
   };
 
+  const handleCrossChainBorrow = () => {
+    if (!userAddress || !borrowAmount || !destChain?.eid) return;
+    setErrorMsg("");
+    const amount = parseUnits(borrowAmount, borrowDecimals);
+    if (amount <= 0n) return;
+    if (!oftConfigured) {
+      setErrorMsg("OFT adapter not configured for this borrow token");
+      return;
+    }
+    if (lzNativeFee === 0n) {
+      setErrorMsg("Unable to estimate LayerZero fee. Try again.");
+      return;
+    }
+    if (liquidity !== undefined && amount > liquidity) {
+      setErrorMsg("Exceeds available liquidity");
+      return;
+    }
+    if (amount > maxBorrowable + userBorrowAmount) {
+      setErrorMsg("Exceeds maximum borrowable amount based on your collateral and LTV");
+      return;
+    }
+    if (!hasPosition || !positionCollateralBalance || positionCollateralBalance === 0n) {
+      setErrorMsg("Supply collateral first before borrowing");
+      return;
+    }
+    setTxStep("borrowing-crosschain");
+    writeCrossChain(
+      {
+        address: MULTICALL_ADDRESS,
+        abi: multicallAbi,
+        functionName: "borrowDebtCrossChain",
+        args: [
+          lendingPoolAddr,
+          amount,
+          crossChainSendParam,
+          { nativeFee: lzNativeFee, lzTokenFee },
+        ],
+        value: lzNativeFee,
+        chainId: CHAIN.id,
+      },
+      {
+        onError: (err) => {
+          setTxStep("error");
+          setErrorMsg(err.message.split("\n")[0]);
+        },
+      }
+    );
+  };
+
   const resetTx = () => {
     setTxStep("idle");
     setErrorMsg("");
     resetApprove();
     resetCollateral();
     resetBorrow();
+    resetCrossChain();
   };
 
   // GSAP
@@ -431,6 +571,34 @@ export default function BorrowDetailPage() {
 
     return () => { tl.kill(); };
   }, []);
+
+  // Stagger-animate sidebar form children when switching tabs
+  useEffect(() => {
+    const target = sidebarTab === "borrow"
+      ? borrowFormRef.current
+      : collateralFormRef.current;
+    if (!target) return;
+    const items = target.children;
+    if (!items.length) return;
+    gsap.fromTo(
+      items,
+      { opacity: 0, y: 16 },
+      { opacity: 1, y: 0, duration: 0.4, stagger: 0.07, ease: "power3.out" }
+    );
+  }, [sidebarTab]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!chainDropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (chainDropdownRef.current && !chainDropdownRef.current.contains(e.target as Node)) {
+        setChainDropdownOpen(false);
+      }
+    };
+    // Use setTimeout so the current click event finishes before listener is active
+    const id = setTimeout(() => document.addEventListener("mousedown", handler), 0);
+    return () => { clearTimeout(id); document.removeEventListener("mousedown", handler); };
+  }, [chainDropdownOpen]);
 
   return (
     <div className="space-y-4">
@@ -695,11 +863,17 @@ export default function BorrowDetailPage() {
                   </svg>
                 </div>
                 <p className="text-[var(--text-primary)] font-medium mb-1">
-                  {sidebarTab === "collateral" ? "Collateral Supplied!" : "Borrow Successful!"}
+                  {sidebarTab === "collateral"
+                    ? "Collateral Supplied!"
+                    : isCrossChain
+                    ? "Cross-Chain Borrow Submitted!"
+                    : "Borrow Successful!"}
                 </p>
                 <p className="text-xs text-[var(--text-tertiary)] mb-4">
                   {sidebarTab === "collateral"
                     ? "Your collateral has been added to the position."
+                    : isCrossChain
+                    ? `Tokens will arrive on ${destChain?.name ?? "destination chain"} via LayerZero.`
                     : "Tokens have been sent to your wallet."}
                 </p>
                 <button
@@ -710,7 +884,7 @@ export default function BorrowDetailPage() {
                 </button>
               </div>
             ) : sidebarTab === "collateral" ? (
-              <>
+              <div ref={collateralFormRef}>
                 {/* Supply Collateral form */}
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-sm font-semibold text-[var(--text-primary)]">
@@ -757,12 +931,6 @@ export default function BorrowDetailPage() {
                 {/* Info rows */}
                 <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4 space-y-2.5">
                   <div className="flex items-center justify-between text-sm">
-                    <span className="text-[var(--text-secondary)]">Collateral Amount</span>
-                    <span className="text-[var(--text-primary)] font-medium">
-                      {collateralAmount || "0.00"} {collateralSymbol}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
                     <span className="text-[var(--text-secondary)]">LTV</span>
                     <span className="text-[var(--text-primary)]">{ltv.toFixed(0)}%</span>
                   </div>
@@ -799,9 +967,9 @@ export default function BorrowDetailPage() {
                     ? "Enter an amount"
                     : "Supply Collateral"}
                 </button>
-              </>
+              </div>
             ) : (
-              <>
+              <div ref={borrowFormRef}>
                 {/* Borrow form */}
                 <div className="flex items-center justify-between mb-3">
                   <span className="text-sm font-semibold text-[var(--text-primary)]">
@@ -811,6 +979,99 @@ export default function BorrowDetailPage() {
                     <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={24} />
                   ) : (
                     <div className="w-6 h-6 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
+                  )}
+                </div>
+
+                {/* Cross-chain toggle */}
+                <div className="mb-4 relative z-10">
+                  <button
+                    onClick={() => { setCrossChainEnabled(!crossChainEnabled); if (crossChainEnabled) { setDestChain(null); setChainDropdownOpen(false); } }}
+                    disabled={txStep !== "idle"}
+                    className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition-colors cursor-pointer"
+                    style={{
+                      backgroundColor: isCrossChain ? "rgba(59,130,246,0.08)" : "var(--bg-secondary)",
+                      borderColor: isCrossChain ? "rgba(59,130,246,0.3)" : "var(--border)",
+                    }}
+                  >
+                    <span className="text-xs font-medium text-[var(--text-primary)]">Borrow to Another Chain</span>
+                    {/* Toggle switch */}
+                    <div className={`relative w-9 h-5 rounded-full transition-colors ${isCrossChain ? "bg-blue-500" : "bg-[var(--bg-tertiary)]"}`}>
+                      <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${isCrossChain ? "translate-x-4" : "translate-x-0.5"}`} />
+                    </div>
+                  </button>
+
+                  {/* Chain dropdown */}
+                  {isCrossChain && (
+                    <div className="mt-2 space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-200">
+                      <div ref={chainDropdownRef} className="relative z-50">
+                        {/* Custom dropdown trigger */}
+                        <button
+                          onClick={() => setChainDropdownOpen(!chainDropdownOpen)}
+                          disabled={txStep !== "idle"}
+                          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-xs font-medium text-[var(--text-primary)] transition-all cursor-pointer hover:border-blue-500/40 focus:border-blue-500/50 outline-none"
+                        >
+                          {destChain ? (
+                            <Image
+                              src={destChain.logo}
+                              alt={destChain.name}
+                              width={20}
+                              height={20}
+                              className="rounded-full shrink-0"
+                            />
+                          ) : (
+                            <div className="w-5 h-5 rounded-full bg-[var(--bg-tertiary)] shrink-0" />
+                          )}
+                          <span className={`flex-1 text-left ${!destChain ? "text-[var(--text-tertiary)]" : ""}`}>{destChain?.name ?? "Select chain"}</span>
+                          <svg
+                            width="12" height="12" viewBox="0 0 12 12" fill="none"
+                            className={`text-[var(--text-tertiary)] transition-transform duration-200 ${chainDropdownOpen ? "rotate-180" : ""}`}
+                          >
+                            <path d="M3 4.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </button>
+
+                        {/* Dropdown options */}
+                        {chainDropdownOpen && (
+                          <div
+                            className="absolute z-50 top-[calc(100%+4px)] left-0 w-full bg-[var(--bg-card)] border border-[var(--border)] rounded-lg shadow-xl overflow-hidden origin-top"
+                          >
+                            {DEST_CHAINS.map((chain) => (
+                              <button
+                                key={chain.eid}
+                                onClick={() => {
+                                  setDestChain(chain);
+                                  setChainDropdownOpen(false);
+                                }}
+                                className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-medium transition-colors cursor-pointer ${
+                                  destChain?.eid === chain.eid
+                                    ? "bg-blue-500/10 text-blue-400"
+                                    : "text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]"
+                                }`}
+                              >
+                                <Image
+                                  src={chain.logo}
+                                  alt={chain.name}
+                                  width={20}
+                                  height={20}
+                                  className="rounded-full shrink-0"
+                                />
+                                <span className="flex-1 text-left">{chain.name}</span>
+                                {destChain?.eid === chain.eid && (
+                                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                                    <path d="M3.5 7l2.5 2.5 4.5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                )}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      {!oftConfigured && factoryAddr && (
+                        <p className="text-[10px] text-red-400 px-1">
+                          OFT adapter not configured for {borrowSymbol}
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
 
@@ -838,12 +1099,6 @@ export default function BorrowDetailPage() {
 
                 {/* Info rows */}
                 <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4 space-y-2.5">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-[var(--text-secondary)]">Borrow Amount</span>
-                    <span className="text-[var(--text-primary)] font-medium">
-                      {borrowAmount || "0.00"} {borrowSymbol}
-                    </span>
-                  </div>
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-[var(--text-secondary)]">Borrow APY</span>
                     <span className="text-[var(--accent)]">{borrowApy.toFixed(2)}%</span>
@@ -910,13 +1165,14 @@ export default function BorrowDetailPage() {
 
                 {/* Action button */}
                 <button
-                  onClick={handleBorrow}
+                  onClick={isCrossChain && destChain ? handleCrossChainBorrow : handleBorrow}
                   disabled={
                     txStep !== "idle" ||
                     !isConnected ||
                     isLoading ||
                     !borrowAmount ||
-                    Number(borrowAmount) <= 0
+                    Number(borrowAmount) <= 0 ||
+                    (isCrossChain && (!destChain || !oftConfigured || lzNativeFee === 0n))
                   }
                   className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
                 >
@@ -924,13 +1180,25 @@ export default function BorrowDetailPage() {
                     ? "Connect Wallet"
                     : txStep === "borrowing"
                     ? "Borrowing..."
+                    : txStep === "borrowing-crosschain"
+                    ? crossChainConfirming
+                      ? "Confirming..."
+                      : `Sending to ${destChain?.name ?? "destination"}...`
                     : isLoading
                     ? "Loading..."
+                    : isCrossChain && !destChain
+                    ? "Select a destination chain"
+                    : isCrossChain && !oftConfigured
+                    ? "OFT Not Configured"
                     : !borrowAmount || Number(borrowAmount) <= 0
                     ? "Enter an amount"
+                    : isCrossChain && lzNativeFee === 0n && crossChainParsedAmount > 0n
+                    ? "Estimating Fee..."
+                    : isCrossChain && destChain
+                    ? `Borrow to ${destChain.name}`
                     : "Borrow"}
                 </button>
-              </>
+              </div>
             )}
           </div>
         </div>
