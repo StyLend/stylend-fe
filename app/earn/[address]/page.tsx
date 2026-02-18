@@ -61,9 +61,19 @@ export default function EarnDetailPage() {
   const [wErrorMsg, setWErrorMsg] = useState("");
   const [activeTab, setActiveTab] = useState<"overview" | "position">("overview");
   const [sidebarTab, setSidebarTab] = useState<"deposit" | "withdraw">("deposit");
+  const [showDepositModal, setShowDepositModal] = useState(false);
+  const [showWithdrawModal, setShowWithdrawModal] = useState(false);
+  const [needsApproval, setNeedsApproval] = useState(false);
+  const [wNeedsApproval, setWNeedsApproval] = useState(false);
 
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
+  const depositBackdropRef = useRef<HTMLDivElement>(null);
+  const depositCardRef = useRef<HTMLDivElement>(null);
+  const depositContentRef = useRef<HTMLDivElement>(null);
+  const withdrawBackdropRef = useRef<HTMLDivElement>(null);
+  const withdrawCardRef = useRef<HTMLDivElement>(null);
+  const withdrawContentRef = useRef<HTMLDivElement>(null);
 
   // ── Contract reads ──
 
@@ -235,7 +245,15 @@ export default function EarnDetailPage() {
       setErrorMsg("Insufficient balance");
       return;
     }
+    setShowDepositModal(true);
+  };
+
+  const confirmSupply = () => {
+    if (!userAddress || !borrowTokenAddr || !supplyAmount) return;
+    setErrorMsg("");
+    const amount = parseUnits(supplyAmount, borrowDecimals);
     if (allowance < amount) {
+      setNeedsApproval(true);
       setTxStep("approving");
       writeApprove(
         {
@@ -253,6 +271,7 @@ export default function EarnDetailPage() {
         }
       );
     } else {
+      setNeedsApproval(false);
       doSupplyTx();
     }
   };
@@ -321,7 +340,15 @@ export default function EarnDetailPage() {
       setWErrorMsg("Insufficient shares");
       return;
     }
+    setShowWithdrawModal(true);
+  };
+
+  const confirmWithdraw = () => {
+    if (!userAddress || !sharesTokenAddr || !withdrawShares) return;
+    setWErrorMsg("");
+    const shares = parseUnits(withdrawShares, 18);
     if (sharesAllowance < shares) {
+      setWNeedsApproval(true);
       setWTxStep("approving");
       writeWApprove(
         {
@@ -339,6 +366,7 @@ export default function EarnDetailPage() {
         }
       );
     } else {
+      setWNeedsApproval(false);
       doWithdrawTx();
     }
   };
@@ -365,6 +393,54 @@ export default function EarnDetailPage() {
 
     return () => { tl.kill(); };
   }, []);
+
+  // Tab switch animation
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
+    if (!leftRef.current) return;
+    const children = leftRef.current.children;
+    if (!children.length) return;
+    gsap.fromTo(children, { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.45, stagger: 0.06, ease: "power3.out" });
+  }, [activeTab]);
+
+  // Modal entrance animations
+  useEffect(() => {
+    if (!showDepositModal) return;
+    if (depositBackdropRef.current) {
+      gsap.fromTo(depositBackdropRef.current, { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power2.out" });
+    }
+    if (depositCardRef.current) {
+      gsap.fromTo(depositCardRef.current, { opacity: 0, y: 40, scale: 0.95 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "back.out(1.4)" });
+    }
+  }, [showDepositModal]);
+
+  useEffect(() => {
+    if (!showWithdrawModal) return;
+    if (withdrawBackdropRef.current) {
+      gsap.fromTo(withdrawBackdropRef.current, { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power2.out" });
+    }
+    if (withdrawCardRef.current) {
+      gsap.fromTo(withdrawCardRef.current, { opacity: 0, y: 40, scale: 0.95 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "back.out(1.4)" });
+    }
+  }, [showWithdrawModal]);
+
+  // Modal phase transition animations
+  useEffect(() => {
+    if (!showDepositModal || !depositContentRef.current) return;
+    const children = depositContentRef.current.children;
+    if (children.length) {
+      gsap.fromTo(children, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.4, stagger: 0.07, ease: "power3.out" });
+    }
+  }, [txStep, showDepositModal]);
+
+  useEffect(() => {
+    if (!showWithdrawModal || !withdrawContentRef.current) return;
+    const children = withdrawContentRef.current.children;
+    if (children.length) {
+      gsap.fromTo(children, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.4, stagger: 0.07, ease: "power3.out" });
+    }
+  }, [wTxStep, showWithdrawModal]);
 
   return (
     <div className="space-y-4">
@@ -538,211 +614,516 @@ export default function EarnDetailPage() {
 
             {sidebarTab === "deposit" ? (
               /* ── Deposit ── */
-              txStep === "success" ? (
-                <div className="text-center py-6">
-                  <div className="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-3">
-                    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                      <path d="M7 14l5 5 9-9" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
+              <>
+                <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-3">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    value={supplyAmount}
+                    onChange={(e) => {
+                      if (/^\d*\.?\d*$/.test(e.target.value)) setSupplyAmount(e.target.value);
+                    }}
+                    disabled={txStep !== "idle"}
+                    className="w-full bg-transparent outline-none text-2xl font-semibold text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] mb-2"
+                  />
+                  <div className="flex items-center justify-between text-xs text-[var(--text-tertiary)]">
+                    <span>
+                      {isConnected && !isLoading
+                        ? `${fmt(walletBalance, borrowDecimals)} ${borrowSymbol}`
+                        : "—"}
+                    </span>
+                    {isConnected && !isLoading && (
+                      <button
+                        onClick={() => setSupplyAmount(formatUnits(walletBalance, borrowDecimals))}
+                        disabled={txStep !== "idle"}
+                        className="text-[var(--accent)] font-semibold hover:underline cursor-pointer"
+                      >
+                        MAX
+                      </button>
+                    )}
                   </div>
-                  <p className="text-[var(--text-primary)] font-medium mb-1">Deposit Successful!</p>
-                  <p className="text-xs text-[var(--text-tertiary)] mb-4">Liquidity has been added to the pool.</p>
-                  <button
-                    onClick={resetTx}
-                    className="w-full py-2.5 rounded-lg bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] text-sm font-semibold transition-colors cursor-pointer"
-                  >
-                    Done
-                  </button>
                 </div>
-              ) : (
-                <>
-                  <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-3">
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="0.00"
-                      value={supplyAmount}
-                      onChange={(e) => {
-                        if (/^\d*\.?\d*$/.test(e.target.value)) setSupplyAmount(e.target.value);
-                      }}
-                      disabled={txStep !== "idle"}
-                      className="w-full bg-transparent outline-none text-2xl font-semibold text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] mb-2"
-                    />
-                    <div className="flex items-center justify-between text-xs text-[var(--text-tertiary)]">
-                      <span>
-                        {isConnected && !isLoading
-                          ? `${fmt(walletBalance, borrowDecimals)} ${borrowSymbol}`
-                          : "—"}
-                      </span>
-                      {isConnected && !isLoading && (
-                        <button
-                          onClick={() => setSupplyAmount(formatUnits(walletBalance, borrowDecimals))}
-                          disabled={txStep !== "idle"}
-                          className="text-[var(--accent)] font-semibold hover:underline cursor-pointer"
-                        >
-                          MAX
-                        </button>
+
+                <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4 space-y-2.5">
+                  <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      {borrowSymbol ? (
+                        <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={18} />
+                      ) : (
+                        <div className="w-[18px] h-[18px] rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
                       )}
+                      <span className="text-[var(--text-secondary)]">Deposit ({borrowSymbol || "..."})</span>
                     </div>
+                    <span className="text-[var(--text-primary)] font-medium">
+                      {supplyAmount || "0.00"}
+                    </span>
                   </div>
-
-                  <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4 space-y-2.5">
-                    <div className="flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-2">
-                        {borrowSymbol ? (
-                          <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={18} />
-                        ) : (
-                          <div className="w-[18px] h-[18px] rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
-                        )}
-                        <span className="text-[var(--text-secondary)]">Deposit ({borrowSymbol || "..."})</span>
-                      </div>
-                      <span className="text-[var(--text-primary)] font-medium">
-                        {supplyAmount || "0.00"}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-[var(--text-secondary)]">APY</span>
-                      <span className="text-[var(--accent)]">{supplyApy.toFixed(2)}%</span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-[var(--text-secondary)]">LTV</span>
-                      <span className="text-[var(--text-primary)]">{ltv.toFixed(0)}%</span>
-                    </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-[var(--text-secondary)]">APY</span>
+                    <span className="text-[var(--accent)]">{supplyApy.toFixed(2)}%</span>
                   </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-[var(--text-secondary)]">LTV</span>
+                    <span className="text-[var(--text-primary)]">{ltv.toFixed(0)}%</span>
+                  </div>
+                </div>
 
-                  {errorMsg && (
-                    <div className="mb-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
-                      {errorMsg}
-                    </div>
-                  )}
+                {errorMsg && (
+                  <div className="mb-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                    {errorMsg}
+                  </div>
+                )}
 
-                  <button
-                    onClick={handleSupply}
-                    disabled={
-                      txStep !== "idle" ||
-                      !isConnected ||
-                      isLoading ||
-                      !supplyAmount ||
-                      Number(supplyAmount) <= 0
-                    }
-                    className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
-                  >
-                    {!isConnected
-                      ? "Connect Wallet"
-                      : txStep === "approving"
-                      ? "Approving..."
-                      : txStep === "supplying"
-                      ? "Depositing..."
-                      : isLoading
-                      ? "Loading..."
-                      : "Deposit"}
-                  </button>
-                </>
-              )
+                <button
+                  onClick={handleSupply}
+                  disabled={
+                    !isConnected ||
+                    isLoading ||
+                    !supplyAmount ||
+                    Number(supplyAmount) <= 0
+                  }
+                  className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                >
+                  {!isConnected
+                    ? "Connect Wallet"
+                    : isLoading
+                    ? "Loading..."
+                    : "Deposit"}
+                </button>
+              </>
             ) : (
               /* ── Withdraw ── */
-              wTxStep === "success" ? (
-                <div className="text-center py-6">
-                  <div className="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-3">
-                    <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                      <path d="M7 14l5 5 9-9" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
+              <>
+                <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-3">
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    placeholder="0.00"
+                    value={withdrawShares}
+                    onChange={(e) => {
+                      if (/^\d*\.?\d*$/.test(e.target.value)) setWithdrawShares(e.target.value);
+                    }}
+                    disabled={wTxStep !== "idle"}
+                    className="w-full bg-transparent outline-none text-2xl font-semibold text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] mb-2"
+                  />
+                  <div className="flex items-center justify-between text-xs text-[var(--text-tertiary)]">
+                    <div className="flex items-center gap-1.5">
+                      {borrowSymbol && <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={16} />}
+                      <span>{isConnected && !isLoading ? `${fmt(sharesBalance, 18)} ${borrowSymbol}` : "—"}</span>
+                    </div>
+                    {isConnected && !isLoading && sharesBalance > 0n && (
+                      <button
+                        onClick={() => setWithdrawShares(formatUnits(sharesBalance, 18))}
+                        disabled={wTxStep !== "idle"}
+                        className="text-[var(--accent)] font-semibold hover:underline cursor-pointer"
+                      >
+                        MAX
+                      </button>
+                    )}
                   </div>
-                  <p className="text-[var(--text-primary)] font-medium mb-1">Withdraw Successful!</p>
-                  <p className="text-xs text-[var(--text-tertiary)] mb-4">Liquidity has been withdrawn from the pool.</p>
-                  <button
-                    onClick={resetWTx}
-                    className="w-full py-2.5 rounded-lg bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] text-sm font-semibold transition-colors cursor-pointer"
-                  >
-                    Done
-                  </button>
                 </div>
-              ) : (
-                <>
-                  {/* Shares input */}
-                  <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-3">
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="0.00"
-                      value={withdrawShares}
-                      onChange={(e) => {
-                        if (/^\d*\.?\d*$/.test(e.target.value)) setWithdrawShares(e.target.value);
-                      }}
-                      disabled={wTxStep !== "idle"}
-                      className="w-full bg-transparent outline-none text-2xl font-semibold text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] mb-2"
-                    />
-                    <div className="flex items-center justify-between text-xs text-[var(--text-tertiary)]">
-                      <div className="flex items-center gap-1.5">
-                        {borrowSymbol && <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={16} />}
-                        <span>{isConnected && !isLoading ? `${fmt(sharesBalance, 18)} ${borrowSymbol}` : "—"}</span>
-                      </div>
-                      {isConnected && !isLoading && sharesBalance > 0n && (
-                        <button
-                          onClick={() => setWithdrawShares(formatUnits(sharesBalance, 18))}
-                          disabled={wTxStep !== "idle"}
-                          className="text-[var(--accent)] font-semibold hover:underline cursor-pointer"
-                        >
-                          MAX
-                        </button>
+
+                <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4 space-y-2.5">
+                  <div className="flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2">
+                      {borrowSymbol ? (
+                        <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={18} />
+                      ) : (
+                        <div className="w-[18px] h-[18px] rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
                       )}
+                      <span className="text-[var(--text-secondary)]">Withdraw ({borrowSymbol || "..."})</span>
                     </div>
+                    <span className="text-[var(--text-primary)] font-medium">
+                      {withdrawShares || "0.00"}
+                    </span>
                   </div>
-
-                  {/* Info rows */}
-                  <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4 space-y-2.5">
-                    <div className="flex items-center justify-between text-sm">
-                      <div className="flex items-center gap-2">
-                        {borrowSymbol ? (
-                          <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={18} />
-                        ) : (
-                          <div className="w-[18px] h-[18px] rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
-                        )}
-                        <span className="text-[var(--text-secondary)]">Withdraw ({borrowSymbol || "..."})</span>
-                      </div>
-                      <span className="text-[var(--text-primary)] font-medium">
-                        {withdrawShares || "0.00"}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between text-sm">
-                      <span className="text-[var(--text-secondary)]">APY</span>
-                      <span className="text-[var(--accent)]">{supplyApy.toFixed(2)}%</span>
-                    </div>
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-[var(--text-secondary)]">APY</span>
+                    <span className="text-[var(--accent)]">{supplyApy.toFixed(2)}%</span>
                   </div>
+                </div>
 
-                  {wErrorMsg && (
-                    <div className="mb-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
-                      {wErrorMsg}
-                    </div>
-                  )}
+                {wErrorMsg && (
+                  <div className="mb-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                    {wErrorMsg}
+                  </div>
+                )}
 
-                  <button
-                    onClick={handleWithdraw}
-                    disabled={
-                      wTxStep !== "idle" ||
-                      !isConnected ||
-                      isLoading ||
-                      !withdrawShares ||
-                      Number(withdrawShares) <= 0
-                    }
-                    className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
-                  >
-                    {!isConnected
-                      ? "Connect Wallet"
-                      : wTxStep === "approving"
-                      ? "Approving..."
-                      : wTxStep === "withdrawing"
-                      ? "Withdrawing..."
-                      : isLoading
-                      ? "Loading..."
-                      : "Withdraw"}
-                  </button>
-                </>
-              )
+                <button
+                  onClick={handleWithdraw}
+                  disabled={
+                    !isConnected ||
+                    isLoading ||
+                    !withdrawShares ||
+                    Number(withdrawShares) <= 0
+                  }
+                  className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                >
+                  {!isConnected
+                    ? "Connect Wallet"
+                    : isLoading
+                    ? "Loading..."
+                    : "Withdraw"}
+                </button>
+              </>
             )}
           </div>
         </div>
       </div>
+
+      {/* ── Confirm Deposit Modal ── */}
+      {showDepositModal && (() => {
+        const isReview = txStep === "idle" || txStep === "error";
+        const isConfirming = txStep === "approving" || txStep === "supplying";
+        const isDone = txStep === "success";
+        const activeTxHash = supplyTxHash ?? approveTxHash;
+
+        return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center">
+            <div
+              ref={depositBackdropRef}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              onClick={() => { if (isReview || isDone) { resetTx(); setShowDepositModal(false); if (isDone) setSupplyAmount(""); } }}
+            />
+            <div ref={depositCardRef} className="relative z-10 w-full max-w-[420px] mx-4 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 pt-6 pb-4">
+                <h3 className="text-lg font-bold text-[var(--text-primary)]">
+                  {isDone ? "Transaction Successful" : isConfirming ? "Confirm" : "Review"}
+                </h3>
+                {(isReview || isDone) && (
+                  <button
+                    onClick={() => { resetTx(); setShowDepositModal(false); if (isDone) setSupplyAmount(""); }}
+                    className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                      <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+
+              <div ref={depositContentRef} className="px-6 pb-6 space-y-4">
+                {/* Pool info card — Review & Confirm */}
+                {!isDone && (
+                  <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4">
+                    <div className="flex items-center gap-2 mb-4">
+                      <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={24} />
+                      <span className="text-sm font-semibold text-[var(--text-primary)]">
+                        {borrowSymbol}
+                      </span>
+                    </div>
+                    <div className="text-xs text-[var(--text-tertiary)] mb-1.5">Deposit</div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-lg font-bold text-[var(--text-primary)]">{supplyAmount}</span>
+                      <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={28} />
+                    </div>
+                  </div>
+                )}
+
+                {/* Review phase */}
+                {isReview && (
+                  <>
+                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 space-y-3">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-tertiary)]">Deposit ({borrowSymbol})</span>
+                        <span className="text-[var(--text-primary)] font-medium">{supplyAmount}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-tertiary)]">APY</span>
+                        <span className="text-[var(--accent)]">{supplyApy.toFixed(2)}%</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-tertiary)]">LTV</span>
+                        <span className="text-[var(--text-primary)]">{ltv.toFixed(0)}%</span>
+                      </div>
+                    </div>
+
+                    {errorMsg && (
+                      <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                        {errorMsg}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => {
+                        if (txStep === "error") { setTxStep("idle"); setErrorMsg(""); resetApprove(); resetSupply(); }
+                        confirmSupply();
+                      }}
+                      className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                    >
+                      {txStep === "error" ? "Retry" : "Confirm"}
+                    </button>
+                  </>
+                )}
+
+                {/* Confirming phase */}
+                {isConfirming && (
+                  <div className="space-y-4">
+                    {activeTxHash && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-[var(--text-tertiary)]">
+                          {txStep === "approving" ? "Approve" : "Deposit"}
+                        </span>
+                        <a
+                          href={`${CHAIN.blockExplorers?.default.url}/tx/${activeTxHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline"
+                        >
+                          {(activeTxHash as string).slice(0, 6)}...{(activeTxHash as string).slice(-4)}
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                            <path d="M3 1h6v6M9 1L1 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </a>
+                      </div>
+                    )}
+
+                    <div className="w-full h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-[var(--accent)] rounded-full animate-pulse"
+                        style={{ width: txStep === "supplying" ? "70%" : "35%", transition: "width 1.5s ease-in-out" }}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-center gap-2 py-2">
+                      <svg className="animate-spin h-4 w-4 text-[var(--accent)]" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      <span className="text-sm text-[var(--text-secondary)]">
+                        {needsApproval
+                          ? txStep === "approving"
+                            ? "Signature 1/2 — Proceed in your wallet"
+                            : "Signature 2/2 — Proceed in your wallet"
+                          : "Signature 1/1 — Proceed in your wallet"}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Done phase */}
+                {isDone && (
+                  <div className="space-y-4">
+                    <div className="flex flex-col items-center py-4">
+                      <div className="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center mb-3">
+                        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                          <path d="M7 14l5 5 9-9" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </div>
+                      <p className="text-sm text-[var(--text-secondary)]">Deposit successful</p>
+                    </div>
+
+                    {supplyTxHash && (
+                      <div className="flex items-center justify-center">
+                        <a
+                          href={`${CHAIN.blockExplorers?.default.url}/tx/${supplyTxHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline"
+                        >
+                          View on explorer
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                            <path d="M3 1h6v6M9 1L1 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </a>
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => { resetTx(); setShowDepositModal(false); setSupplyAmount(""); }}
+                      className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                    >
+                      Done
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Confirm Withdraw Modal ── */}
+      {showWithdrawModal && (() => {
+        const isReview = wTxStep === "idle" || wTxStep === "error";
+        const isConfirming = wTxStep === "approving" || wTxStep === "withdrawing";
+        const isDone = wTxStep === "success";
+        const activeTxHash = withdrawTxHash ?? wApproveTxHash;
+        const estimatedUnderlying = (() => {
+          try {
+            const shares = parseUnits(withdrawShares || "0", 18);
+            return sharesToUnderlying(shares);
+          } catch { return 0n; }
+        })();
+
+        return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center">
+            <div
+              ref={withdrawBackdropRef}
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              onClick={() => { if (isReview || isDone) { resetWTx(); setShowWithdrawModal(false); if (isDone) setWithdrawShares(""); } }}
+            />
+            <div ref={withdrawCardRef} className="relative z-10 w-full max-w-[420px] mx-4 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 pt-6 pb-4">
+                <h3 className="text-lg font-bold text-[var(--text-primary)]">
+                  {isDone ? "Transaction Successful" : isConfirming ? "Confirm" : "Review"}
+                </h3>
+                {(isReview || isDone) && (
+                  <button
+                    onClick={() => { resetWTx(); setShowWithdrawModal(false); if (isDone) setWithdrawShares(""); }}
+                    className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                      <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+
+              <div ref={withdrawContentRef} className="px-6 pb-6 space-y-4">
+                {/* Pool info card — Review & Confirm */}
+                {!isDone && (
+                  <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4">
+                    <div className="flex items-center gap-2 mb-4">
+                      <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={24} />
+                      <span className="text-sm font-semibold text-[var(--text-primary)]">
+                        {borrowSymbol}
+                      </span>
+                    </div>
+                    <div className="text-xs text-[var(--text-tertiary)] mb-1.5">Withdraw</div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-lg font-bold text-[var(--text-primary)]">
+                          {fmt(estimatedUnderlying, borrowDecimals)}
+                        </span>
+                        <span className="text-xs text-[var(--text-tertiary)]">{borrowSymbol}</span>
+                      </div>
+                      <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={28} />
+                    </div>
+                  </div>
+                )}
+
+                {/* Review phase */}
+                {isReview && (
+                  <>
+                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 space-y-3">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-tertiary)]">Withdraw ({borrowSymbol})</span>
+                        <span className="text-[var(--text-primary)] font-medium">{fmt(estimatedUnderlying, borrowDecimals)}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-tertiary)]">APY</span>
+                        <span className="text-[var(--accent)]">{supplyApy.toFixed(2)}%</span>
+                      </div>
+                    </div>
+
+                    {wErrorMsg && (
+                      <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                        {wErrorMsg}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => {
+                        if (wTxStep === "error") { setWTxStep("idle"); setWErrorMsg(""); resetWApprove(); resetWithdraw(); }
+                        confirmWithdraw();
+                      }}
+                      className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                    >
+                      {wTxStep === "error" ? "Retry" : "Confirm"}
+                    </button>
+                  </>
+                )}
+
+                {/* Confirming phase */}
+                {isConfirming && (
+                  <div className="space-y-4">
+                    {activeTxHash && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-[var(--text-tertiary)]">
+                          {wTxStep === "approving" ? "Approve" : "Withdraw"}
+                        </span>
+                        <a
+                          href={`${CHAIN.blockExplorers?.default.url}/tx/${activeTxHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline"
+                        >
+                          {(activeTxHash as string).slice(0, 6)}...{(activeTxHash as string).slice(-4)}
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                            <path d="M3 1h6v6M9 1L1 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </a>
+                      </div>
+                    )}
+
+                    <div className="w-full h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-[var(--accent)] rounded-full animate-pulse"
+                        style={{ width: wTxStep === "withdrawing" ? "70%" : "35%", transition: "width 1.5s ease-in-out" }}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-center gap-2 py-2">
+                      <svg className="animate-spin h-4 w-4 text-[var(--accent)]" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      <span className="text-sm text-[var(--text-secondary)]">
+                        {wNeedsApproval
+                          ? wTxStep === "approving"
+                            ? "Signature 1/2 — Proceed in your wallet"
+                            : "Signature 2/2 — Proceed in your wallet"
+                          : "Signature 1/1 — Proceed in your wallet"}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Done phase */}
+                {isDone && (
+                  <div className="space-y-4">
+                    <div className="flex flex-col items-center py-4">
+                      <div className="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center mb-3">
+                        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                          <path d="M7 14l5 5 9-9" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </div>
+                      <p className="text-sm text-[var(--text-secondary)]">Withdraw successful</p>
+                    </div>
+
+                    {withdrawTxHash && (
+                      <div className="flex items-center justify-center">
+                        <a
+                          href={`${CHAIN.blockExplorers?.default.url}/tx/${withdrawTxHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline"
+                        >
+                          View on explorer
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                            <path d="M3 1h6v6M9 1L1 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </a>
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => { resetWTx(); setShowWithdrawModal(false); setWithdrawShares(""); }}
+                      className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                    >
+                      Done
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

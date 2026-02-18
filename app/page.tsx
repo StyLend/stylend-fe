@@ -574,10 +574,10 @@ export default function Home() {
   const loadedPools = [pool0.data, pool1.data];
 
   // Fetch user positions across all pools
-  const { data: userPositions } = useUserPositions(loadedPools, address);
+  const { data: userPositions, isLoading: isLoadingPositions } = useUserPositions(loadedPools, address);
 
   // Fetch cross-chain loan balances (Base Sepolia) — only for pools with active loans
-  const { data: crossChainLoans } = useCrossChainLoans(
+  const { data: crossChainLoans, isLoading: isLoadingCrossChain } = useCrossChainLoans(
     address,
     userPositions?.loans ?? []
   );
@@ -713,6 +713,11 @@ export default function Home() {
 
   const hasPositions = positionRows.length > 0;
 
+  // Loading state: connected but data not yet fetched
+  // Only check pools that actually exist in LENDING_POOL_ADDRESSES
+  const poolsLoading = loadedPools.filter(Boolean).length < LENDING_POOL_ADDRESSES.length;
+  const isDataLoading = isConnected && (poolsLoading || isLoadingPositions);
+
   return (
     <div className="space-y-12">
       {/* ============ EARN SECTION ============ */}
@@ -726,15 +731,48 @@ export default function Home() {
           <div className="text-sm text-[var(--text-secondary)] mb-1">
             Your deposits
           </div>
-          <div className="text-4xl font-bold text-[var(--text-primary)]">
-            {isConnected && userPositions
-              ? formatUsd(userPositions.totalDepositUsd)
-              : "$0.00"}
-          </div>
+          {isDataLoading ? (
+            <div className="h-10 w-40 bg-[var(--bg-tertiary)] rounded-lg animate-pulse" />
+          ) : (
+            <div className="text-4xl font-bold text-[var(--text-primary)]">
+              {isConnected && userPositions
+                ? formatUsd(userPositions.totalDepositUsd)
+                : "$0.00"}
+            </div>
+          )}
         </div>
 
         {/* Pool positions or empty state */}
-        {isConnected && hasDeposits ? (
+        {isDataLoading ? (
+          <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl overflow-hidden">
+            <div className="grid grid-cols-3 px-5 py-3 border-b border-[var(--border)] text-xs text-[var(--text-tertiary)] font-medium">
+              <span>Asset</span>
+              <span className="text-center">APY</span>
+              <span className="text-right">Pool</span>
+            </div>
+            {[0, 1].map((i) => (
+              <div key={i} className="grid grid-cols-3 items-center px-5 py-4 border-b border-[var(--border)] last:border-b-0">
+                <div className="flex items-center gap-3">
+                  <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
+                  <div className="space-y-1.5">
+                    <div className="h-4 w-20 bg-[var(--bg-tertiary)] rounded animate-pulse" />
+                    <div className="h-3 w-14 bg-[var(--bg-tertiary)] rounded animate-pulse" />
+                  </div>
+                </div>
+                <div className="flex justify-center">
+                  <div className="h-4 w-12 bg-[var(--bg-tertiary)] rounded animate-pulse" />
+                </div>
+                <div className="flex items-center justify-end gap-2">
+                  <div className="flex -space-x-2">
+                    <div className="w-7 h-7 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
+                    <div className="w-7 h-7 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
+                  </div>
+                  <div className="h-3 w-16 bg-[var(--bg-tertiary)] rounded animate-pulse" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : isConnected && hasDeposits ? (
           <EarnPositionsTable deposits={userPositions!.deposits} />
         ) : (
           <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl py-12 text-center">
@@ -791,17 +829,50 @@ export default function Home() {
               Your collateral
             </button>
           </div>
-          <div className="text-4xl font-bold text-[var(--text-primary)]">
-            {isConnected && userPositions
-              ? borrowTab === "loans"
-                ? formatUsd(totalLoanUsd)
-                : formatUsd(userPositions.totalCollateralUsd)
-              : "$0.00"}
-          </div>
+          {isDataLoading ? (
+            <div className="h-10 w-40 bg-[var(--bg-tertiary)] rounded-lg animate-pulse" />
+          ) : (
+            <div className="text-4xl font-bold text-[var(--text-primary)]">
+              {isConnected && userPositions
+                ? borrowTab === "loans"
+                  ? formatUsd(totalLoanUsd)
+                  : formatUsd(userPositions.totalCollateralUsd)
+                : "$0.00"}
+            </div>
+          )}
         </div>
 
         {/* Position table — always visible */}
-        {isConnected && hasPositions ? (
+        {isDataLoading ? (
+          <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl overflow-hidden">
+            <div className="hidden md:grid grid-cols-[2fr_2fr_1fr_1fr] px-6 py-3 border-b border-[var(--border)]">
+              <div className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Collateral</div>
+              <div className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Loan</div>
+              <div className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider text-right">Rate</div>
+              <div className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider text-right">Health</div>
+            </div>
+            {[0, 1].map((i) => (
+              <div key={i} className="grid md:grid-cols-[2fr_2fr_1fr_1fr] items-center px-6 py-4 border-b border-[var(--border)] last:border-b-0">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-5.5 h-5.5 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
+                  <div className="h-4 w-24 bg-[var(--bg-tertiary)] rounded animate-pulse" />
+                  <div className="h-4 w-14 bg-[var(--bg-tertiary)] rounded animate-pulse" />
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-5.5 h-5.5 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
+                  <div className="h-4 w-20 bg-[var(--bg-tertiary)] rounded animate-pulse" />
+                  <div className="h-4 w-14 bg-[var(--bg-tertiary)] rounded animate-pulse" />
+                </div>
+                <div className="flex justify-end">
+                  <div className="h-4 w-12 bg-[var(--bg-tertiary)] rounded animate-pulse" />
+                </div>
+                <div className="flex justify-end">
+                  <div className="h-4 w-10 bg-[var(--bg-tertiary)] rounded animate-pulse" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : isConnected && hasPositions ? (
           <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl overflow-hidden">
             {/* Table header */}
             <div className="hidden md:grid grid-cols-[2fr_2fr_1fr_1fr] px-6 py-3 border-b border-[var(--border)]">

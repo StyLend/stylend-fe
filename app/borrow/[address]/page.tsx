@@ -104,6 +104,9 @@ export default function BorrowDetailPage() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showBorrowModal, setShowBorrowModal] = useState(false);
   const [needsApproval, setNeedsApproval] = useState(false);
+  const [repayLoanAmount, setRepayLoanAmount] = useState("");
+  const [rlTxStep, setRlTxStep] = useState<"idle" | "approving" | "repaying" | "success" | "error">("idle");
+  const [rlErrorMsg, setRlErrorMsg] = useState("");
   const [withdrawColAmount, setWithdrawColAmount] = useState("");
   const [wcTxStep, setWcTxStep] = useState<"idle" | "withdrawing" | "success" | "error">("idle");
   const [wcErrorMsg, setWcErrorMsg] = useState("");
@@ -114,6 +117,12 @@ export default function BorrowDetailPage() {
   const borrowFormRef = useRef<HTMLDivElement>(null);
   const repayFormRef = useRef<HTMLDivElement>(null);
   const chainDropdownRef = useRef<HTMLDivElement>(null);
+  const colModalBackdropRef = useRef<HTMLDivElement>(null);
+  const colModalCardRef = useRef<HTMLDivElement>(null);
+  const colModalContentRef = useRef<HTMLDivElement>(null);
+  const borModalBackdropRef = useRef<HTMLDivElement>(null);
+  const borModalCardRef = useRef<HTMLDivElement>(null);
+  const borModalContentRef = useRef<HTMLDivElement>(null);
 
   // ── Contract reads ──
 
@@ -256,12 +265,16 @@ export default function BorrowDetailPage() {
     contracts: [
       { address: collateralTokenAddr, abi: mockErc20Abi, functionName: "balanceOf", args: [userAddress!], chainId: CHAIN.id },
       { address: collateralTokenAddr, abi: mockErc20Abi, functionName: "allowance", args: [userAddress!, lendingPoolAddr], chainId: CHAIN.id },
+      { address: borrowTokenAddr, abi: mockErc20Abi, functionName: "balanceOf", args: [userAddress!], chainId: CHAIN.id },
+      { address: borrowTokenAddr, abi: mockErc20Abi, functionName: "allowance", args: [userAddress!, lendingPoolAddr], chainId: CHAIN.id },
     ],
-    query: { enabled: !!collateralTokenAddr && !!userAddress, refetchInterval: 5_000 },
+    query: { enabled: !!collateralTokenAddr && !!borrowTokenAddr && !!userAddress, refetchInterval: 5_000 },
   });
 
   const walletCollateralBalance = (userData?.[0]?.result as bigint) ?? 0n;
   const collateralAllowance = (userData?.[1]?.result as bigint) ?? 0n;
+  const walletBorrowBalance = (userData?.[2]?.result as bigint) ?? 0n;
+  const borrowTokenAllowance = (userData?.[3]?.result as bigint) ?? 0n;
 
   // ── All collateral token balances on position contract ──
   const arbClient = usePublicClient({ chainId: CHAIN.id });
@@ -448,12 +461,16 @@ export default function BorrowDetailPage() {
   const { writeContract: writeBorrow, data: borrowTxHash, reset: resetBorrow } = useWriteContract();
   const { writeContract: writeCrossChain, data: crossChainTxHash, reset: resetCrossChain } = useWriteContract();
 
+  const { writeContract: writeRepayApprove, data: repayApproveTxHash, reset: resetRepayApprove } = useWriteContract();
+  const { writeContract: writeRepayLoan, data: repayLoanTxHash, reset: resetRepayLoan } = useWriteContract();
   const { writeContract: writeWithdrawCol, data: withdrawColTxHash, reset: resetWithdrawCol } = useWriteContract();
 
   const { isSuccess: approveConfirmed } = useWaitForTransactionReceipt({ hash: approveTxHash });
   const { isSuccess: collateralConfirmed } = useWaitForTransactionReceipt({ hash: collateralTxHash });
   const { isSuccess: borrowConfirmed } = useWaitForTransactionReceipt({ hash: borrowTxHash });
   const { isSuccess: crossChainConfirmed, isLoading: crossChainConfirming } = useWaitForTransactionReceipt({ hash: crossChainTxHash });
+  const { isSuccess: repayApproveConfirmed } = useWaitForTransactionReceipt({ hash: repayApproveTxHash });
+  const { isSuccess: repayLoanConfirmed } = useWaitForTransactionReceipt({ hash: repayLoanTxHash });
   const { isSuccess: withdrawColConfirmed } = useWaitForTransactionReceipt({ hash: withdrawColTxHash });
 
   // Supply collateral tx
@@ -660,6 +677,109 @@ export default function BorrowDetailPage() {
     resetCrossChain();
   };
 
+  // ── Repay Loan ──
+
+  // Convert repay amount to borrow shares
+  const repaySharesFromAmount = useMemo(() => {
+    if (!repayLoanAmount || Number(repayLoanAmount) <= 0) return 0n;
+    if (!totalBorrowShares || totalBorrowShares === 0n || !totalBorrowAssets || totalBorrowAssets === 0n) return 0n;
+    try {
+      const amount = parseUnits(repayLoanAmount, borrowDecimals);
+      return (amount * totalBorrowShares) / totalBorrowAssets;
+    } catch { return 0n; }
+  }, [repayLoanAmount, borrowDecimals, totalBorrowShares, totalBorrowAssets]);
+
+  const doRepayLoanTx = useCallback(() => {
+    if (!userAddress || !borrowTokenAddr || repaySharesFromAmount === 0n) return;
+    setRlTxStep("repaying");
+    writeRepayLoan(
+      {
+        address: lendingPoolAddr,
+        abi: lendingPoolAbi,
+        functionName: "repayWithSelectedToken",
+        args: [{
+          v0: userAddress,
+          v1: borrowTokenAddr,
+          v2: repaySharesFromAmount,
+          v3: 0n,
+          v4: false,
+          v5: 3000,
+        }],
+        chainId: CHAIN.id,
+      },
+      {
+        onError: (err) => {
+          setRlTxStep("error");
+          setRlErrorMsg(err.message.split("\n")[0]);
+        },
+      }
+    );
+  }, [userAddress, borrowTokenAddr, repaySharesFromAmount, lendingPoolAddr, writeRepayLoan]);
+
+  // After repay approve confirmed → do repay tx
+  useEffect(() => {
+    if (repayApproveConfirmed && rlTxStep === "approving") doRepayLoanTx();
+  }, [repayApproveConfirmed, rlTxStep, doRepayLoanTx]);
+
+  // After repay loan confirmed
+  useEffect(() => {
+    if (repayLoanConfirmed && rlTxStep === "repaying") {
+      setRlTxStep("success");
+      setRepayLoanAmount("");
+      refetchRouter();
+      refetchUser();
+      refetchCollateral();
+      refetchBorrowShares();
+      refetchAllCollaterals();
+      queryClient.invalidateQueries({ queryKey: ["poolData"] });
+      queryClient.invalidateQueries({ queryKey: ["userPositions"] });
+      queryClient.invalidateQueries({ queryKey: ["crossChainLoans"] });
+    }
+  }, [repayLoanConfirmed, rlTxStep, refetchRouter, refetchUser, refetchCollateral, refetchBorrowShares, refetchAllCollaterals, queryClient]);
+
+  const handleRepayLoan = () => {
+    if (!userAddress || !borrowTokenAddr || !repayLoanAmount) return;
+    setRlErrorMsg("");
+    const amount = parseUnits(repayLoanAmount, borrowDecimals);
+    if (amount <= 0n) return;
+    if (amount > walletBorrowBalance) {
+      setRlErrorMsg("Insufficient wallet balance");
+      return;
+    }
+    if (amount > userBorrowAmount) {
+      setRlErrorMsg("Exceeds current loan amount");
+      return;
+    }
+    // Check allowance
+    if (borrowTokenAllowance < amount) {
+      setRlTxStep("approving");
+      writeRepayApprove(
+        {
+          address: borrowTokenAddr,
+          abi: mockErc20Abi,
+          functionName: "approve",
+          args: [lendingPoolAddr, maxUint256],
+          chainId: CHAIN.id,
+        },
+        {
+          onError: (err) => {
+            setRlTxStep("error");
+            setRlErrorMsg(err.message.split("\n")[0]);
+          },
+        }
+      );
+    } else {
+      doRepayLoanTx();
+    }
+  };
+
+  const resetRlTx = () => {
+    setRlTxStep("idle");
+    setRlErrorMsg("");
+    resetRepayApprove();
+    resetRepayLoan();
+  };
+
   // ── Withdraw Collateral ──
   useEffect(() => {
     if (withdrawColConfirmed && wcTxStep === "withdrawing") {
@@ -741,6 +861,20 @@ export default function BorrowDetailPage() {
     );
   }, [sidebarTab]);
 
+  // Animate left panel children when switching overview ↔ position tabs
+  const isFirstRender = useRef(true);
+  useEffect(() => {
+    if (isFirstRender.current) { isFirstRender.current = false; return; }
+    if (!leftRef.current) return;
+    const children = leftRef.current.children;
+    if (!children.length) return;
+    gsap.fromTo(
+      children,
+      { opacity: 0, y: 20 },
+      { opacity: 1, y: 0, duration: 0.45, stagger: 0.06, ease: "power3.out" }
+    );
+  }, [activeTab]);
+
   // Close dropdown on outside click
   useEffect(() => {
     if (!chainDropdownOpen) return;
@@ -753,6 +887,44 @@ export default function BorrowDetailPage() {
     const id = setTimeout(() => document.addEventListener("mousedown", handler), 0);
     return () => { clearTimeout(id); document.removeEventListener("mousedown", handler); };
   }, [chainDropdownOpen]);
+
+  // Modal entrance animations
+  useEffect(() => {
+    if (!showConfirmModal) return;
+    if (colModalBackdropRef.current) {
+      gsap.fromTo(colModalBackdropRef.current, { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power2.out" });
+    }
+    if (colModalCardRef.current) {
+      gsap.fromTo(colModalCardRef.current, { opacity: 0, y: 40, scale: 0.95 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "back.out(1.4)" });
+    }
+  }, [showConfirmModal]);
+
+  useEffect(() => {
+    if (!showBorrowModal) return;
+    if (borModalBackdropRef.current) {
+      gsap.fromTo(borModalBackdropRef.current, { opacity: 0 }, { opacity: 1, duration: 0.3, ease: "power2.out" });
+    }
+    if (borModalCardRef.current) {
+      gsap.fromTo(borModalCardRef.current, { opacity: 0, y: 40, scale: 0.95 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "back.out(1.4)" });
+    }
+  }, [showBorrowModal]);
+
+  // Modal phase transition animations
+  useEffect(() => {
+    if (!showConfirmModal || !colModalContentRef.current) return;
+    const children = colModalContentRef.current.children;
+    if (children.length) {
+      gsap.fromTo(children, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.4, stagger: 0.07, ease: "power3.out" });
+    }
+  }, [txStep, showConfirmModal]);
+
+  useEffect(() => {
+    if (!showBorrowModal || !borModalContentRef.current) return;
+    const children = borModalContentRef.current.children;
+    if (children.length) {
+      gsap.fromTo(children, { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.4, stagger: 0.07, ease: "power3.out" });
+    }
+  }, [txStep, showBorrowModal]);
 
   return (
     <div className="space-y-4">
@@ -1377,30 +1549,24 @@ export default function BorrowDetailPage() {
                 </button>
               </div>
             ) : (
-              /* ── Repay tab (Withdraw Collateral) ── */
+              /* ── Repay tab ── */
               <div ref={repayFormRef}>
-                <div className="flex items-center justify-between mb-3">
-                  <span className="text-sm font-semibold text-[var(--text-primary)]">
-                    Withdraw Collateral
-                  </span>
-                  {collateralSymbol ? (
-                    <TokenIcon symbol={collateralSymbol} color={getTokenColor(collateralSymbol)} size={24} />
-                  ) : (
-                    <div className="w-6 h-6 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
-                  )}
-                </div>
-
-                {wcTxStep === "success" ? (
+                {/* Success state */}
+                {(rlTxStep === "success" || wcTxStep === "success") ? (
                   <div className="text-center py-6">
                     <div className="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-3">
                       <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
                         <path d="M7 14l5 5 9-9" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                     </div>
-                    <p className="text-[var(--text-primary)] font-medium mb-1">Withdraw Successful!</p>
-                    <p className="text-xs text-[var(--text-tertiary)] mb-4">Collateral has been returned to your wallet.</p>
+                    <p className="text-[var(--text-primary)] font-medium mb-1">
+                      {rlTxStep === "success" ? "Repay Successful!" : "Withdraw Successful!"}
+                    </p>
+                    <p className="text-xs text-[var(--text-tertiary)] mb-4">
+                      {rlTxStep === "success" ? "Your loan has been repaid." : "Collateral has been returned to your wallet."}
+                    </p>
                     <button
-                      onClick={resetWcTx}
+                      onClick={() => { resetRlTx(); resetWcTx(); }}
                       className="w-full py-2.5 rounded-lg bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] text-sm font-semibold transition-colors cursor-pointer"
                     >
                       Done
@@ -1408,8 +1574,69 @@ export default function BorrowDetailPage() {
                   </div>
                 ) : (
                   <>
-                    {/* Amount input */}
-                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-3">
+                    {/* ── Repay Loan input card ── */}
+                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-sm font-semibold text-[var(--text-primary)]">
+                          Repay Loan {borrowSymbol}
+                        </span>
+                        {borrowSymbol ? (
+                          <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={24} />
+                        ) : (
+                          <div className="w-6 h-6 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
+                        )}
+                      </div>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        value={repayLoanAmount}
+                        onChange={(e) => {
+                          if (/^\d*\.?\d*$/.test(e.target.value)) setRepayLoanAmount(e.target.value);
+                        }}
+                        disabled={rlTxStep !== "idle"}
+                        className="w-full bg-transparent outline-none text-3xl font-semibold text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] mb-2"
+                      />
+                      <div className="flex items-center justify-between text-xs text-[var(--text-tertiary)]">
+                        <span>
+                          {repayLoanAmount && Number(repayLoanAmount) > 0 && borrowPrice > 0n
+                            ? `$${(Number(repayLoanAmount) * Number(formatUnits(borrowPrice, borrowPriceDec))).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+                            : "$0"}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <span>
+                            {isConnected && !isLoading
+                              ? `${fmt(walletBorrowBalance, borrowDecimals)} ${borrowSymbol}`
+                              : "—"}
+                          </span>
+                          {isConnected && !isLoading && userBorrowAmount > 0n && (
+                            <button
+                              onClick={() => {
+                                const max = walletBorrowBalance < userBorrowAmount ? walletBorrowBalance : userBorrowAmount;
+                                setRepayLoanAmount(formatUnits(max, borrowDecimals));
+                              }}
+                              disabled={rlTxStep !== "idle"}
+                              className="px-2 py-0.5 rounded border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--text-tertiary)] transition-colors cursor-pointer font-semibold"
+                            >
+                              MAX
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* ── Withdraw Collateral input card ── */}
+                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-sm font-semibold text-[var(--text-primary)]">
+                          Withdraw Collateral {collateralSymbol}
+                        </span>
+                        {collateralSymbol ? (
+                          <TokenIcon symbol={collateralSymbol} color={getTokenColor(collateralSymbol)} size={24} />
+                        ) : (
+                          <div className="w-6 h-6 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
+                        )}
+                      </div>
                       <input
                         type="text"
                         inputMode="decimal"
@@ -1419,59 +1646,71 @@ export default function BorrowDetailPage() {
                           if (/^\d*\.?\d*$/.test(e.target.value)) setWithdrawColAmount(e.target.value);
                         }}
                         disabled={wcTxStep !== "idle"}
-                        className="w-full bg-transparent outline-none text-2xl font-semibold text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] mb-2"
+                        className="w-full bg-transparent outline-none text-3xl font-semibold text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] mb-2"
                       />
                       <div className="flex items-center justify-between text-xs text-[var(--text-tertiary)]">
-                        <div className="flex items-center gap-1.5">
-                          {collateralSymbol && <TokenIcon symbol={collateralSymbol} color={getTokenColor(collateralSymbol)} size={16} />}
+                        <span>
+                          {withdrawColAmount && Number(withdrawColAmount) > 0 && collateralPrice > 0n
+                            ? `$${(Number(withdrawColAmount) * Number(formatUnits(collateralPrice, collateralPriceDec))).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+                            : "$0"}
+                        </span>
+                        <div className="flex items-center gap-2">
                           <span>
                             {isConnected && !isLoading && positionCollateralBalance !== undefined
                               ? `${fmt(positionCollateralBalance as bigint, collateralDecimals)} ${collateralSymbol}`
                               : "—"}
                           </span>
+                          {isConnected && !isLoading && positionCollateralBalance && positionCollateralBalance > 0n && (
+                            <button
+                              onClick={() => setWithdrawColAmount(formatUnits(positionCollateralBalance, collateralDecimals))}
+                              disabled={wcTxStep !== "idle"}
+                              className="px-2 py-0.5 rounded border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--text-tertiary)] transition-colors cursor-pointer font-semibold"
+                            >
+                              MAX
+                            </button>
+                          )}
                         </div>
-                        {isConnected && !isLoading && positionCollateralBalance && positionCollateralBalance > 0n && (
-                          <button
-                            onClick={() => setWithdrawColAmount(formatUnits(positionCollateralBalance, collateralDecimals))}
-                            disabled={wcTxStep !== "idle"}
-                            className="text-[var(--accent)] font-semibold hover:underline cursor-pointer"
-                          >
-                            MAX
-                          </button>
-                        )}
                       </div>
                     </div>
 
-                    {/* Info rows */}
-                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4 space-y-2.5">
+                    {/* ── Combined info card ── */}
+                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4 space-y-3">
                       <div className="flex items-center justify-between text-sm">
                         <div className="flex items-center gap-2">
-                          {collateralSymbol ? (
-                            <TokenIcon symbol={collateralSymbol} color={getTokenColor(collateralSymbol)} size={18} />
-                          ) : (
-                            <div className="w-[18px] h-[18px] rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
-                          )}
-                          <span className="text-[var(--text-secondary)]">Withdraw ({collateralSymbol || "..."})</span>
+                          <TokenIcon symbol={collateralSymbol} color={getTokenColor(collateralSymbol)} size={20} />
+                          <span className="text-[var(--text-secondary)]">Collateral ({collateralSymbol || "..."})</span>
                         </div>
                         <span className="text-[var(--text-primary)] font-medium">
-                          {withdrawColAmount || "0.00"}
+                          {positionCollateralBalance ? fmt(positionCollateralBalance, collateralDecimals) : "0.00"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2">
+                          <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={20} />
+                          <span className="text-[var(--text-secondary)]">Loan ({borrowSymbol || "..."})</span>
+                        </div>
+                        <span className="text-[var(--text-primary)] font-medium">
+                          {fmt(userBorrowAmount, borrowDecimals)}
                         </span>
                       </div>
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-[var(--text-secondary)]">LTV</span>
-                        <span className="text-[var(--text-primary)]">{ltv.toFixed(0)}%</span>
+                        <span className="text-[var(--text-primary)]">
+                          {collateralValueUsd > 0 ? ((borrowValueUsd / collateralValueUsd) * 100).toFixed(2) : "0.00"}%
+                        </span>
                       </div>
                       <div className="flex items-center justify-between text-sm">
-                        <span className="text-[var(--text-secondary)]">Health Factor</span>
-                        <span className={`font-medium ${
-                          healthFactor >= 1.5 ? "text-green-400" : healthFactor >= 1.1 ? "text-yellow-400" : "text-red-400"
-                        }`}>
-                          {healthFactor === Infinity ? "∞" : healthFactor.toFixed(2)}
-                        </span>
+                        <span className="text-[var(--text-secondary)]">Rate</span>
+                        <span className="text-[var(--text-primary)]">{borrowApy.toFixed(2)}%</span>
                       </div>
                     </div>
 
-                    {/* Error */}
+                    {/* Errors */}
+                    {rlErrorMsg && (
+                      <div className="mb-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                        {rlErrorMsg}
+                      </div>
+                    )}
                     {wcErrorMsg && (
                       <div className="mb-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
                         {wcErrorMsg}
@@ -1480,23 +1719,35 @@ export default function BorrowDetailPage() {
 
                     {/* Action button */}
                     <button
-                      onClick={handleWithdrawCollateral}
+                      onClick={() => {
+                        const hasRepay = repayLoanAmount && Number(repayLoanAmount) > 0;
+                        const hasWithdraw = withdrawColAmount && Number(withdrawColAmount) > 0;
+                        if (hasRepay) handleRepayLoan();
+                        else if (hasWithdraw) handleWithdrawCollateral();
+                      }}
                       disabled={
-                        wcTxStep !== "idle" ||
+                        (rlTxStep !== "idle" && wcTxStep !== "idle") ||
                         !isConnected ||
                         isLoading ||
-                        !withdrawColAmount ||
-                        Number(withdrawColAmount) <= 0
+                        ((!repayLoanAmount || Number(repayLoanAmount) <= 0) && (!withdrawColAmount || Number(withdrawColAmount) <= 0))
                       }
                       className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
                     >
                       {!isConnected
                         ? "Connect Wallet"
+                        : rlTxStep === "approving"
+                        ? "Approving..."
+                        : rlTxStep === "repaying"
+                        ? "Repaying..."
                         : wcTxStep === "withdrawing"
                         ? "Withdrawing..."
                         : isLoading
                         ? "Loading..."
-                        : "Withdraw Collateral"}
+                        : repayLoanAmount && Number(repayLoanAmount) > 0
+                        ? "Repay Loan"
+                        : withdrawColAmount && Number(withdrawColAmount) > 0
+                        ? "Withdraw Collateral"
+                        : "Enter an amount"}
                     </button>
                   </>
                 )}
@@ -1522,11 +1773,12 @@ export default function BorrowDetailPage() {
           <div className="fixed inset-0 z-[100] flex items-center justify-center">
             {/* Backdrop */}
             <div
+              ref={colModalBackdropRef}
               className="absolute inset-0 bg-black/60 backdrop-blur-sm"
               onClick={() => { if (isReview || isDone) { resetTx(); setShowConfirmModal(false); if (isDone) setCollateralAmount(""); } }}
             />
             {/* Card */}
-            <div className="relative z-10 w-full max-w-[420px] mx-4 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
+            <div ref={colModalCardRef} className="relative z-10 w-full max-w-[420px] mx-4 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
               {/* Header */}
               <div className="flex items-center justify-between px-6 pt-6 pb-4">
                 <h3 className="text-lg font-bold text-[var(--text-primary)]">
@@ -1544,7 +1796,7 @@ export default function BorrowDetailPage() {
                 )}
               </div>
 
-              <div className="px-6 pb-6 space-y-4">
+              <div ref={colModalContentRef} className="px-6 pb-6 space-y-4">
                 {/* Pool info card — shown on Review & Confirm */}
                 {!isDone && (
                   <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4">
@@ -1749,10 +2001,11 @@ export default function BorrowDetailPage() {
         return (
           <div className="fixed inset-0 z-[100] flex items-center justify-center">
             <div
+              ref={borModalBackdropRef}
               className="absolute inset-0 bg-black/60 backdrop-blur-sm"
               onClick={() => { if (isReview || isDone) { resetTx(); setShowBorrowModal(false); if (isDone) setBorrowAmount(""); } }}
             />
-            <div className="relative z-10 w-full max-w-[420px] mx-4 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
+            <div ref={borModalCardRef} className="relative z-10 w-full max-w-[420px] mx-4 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
               {/* Header */}
               <div className="flex items-center justify-between px-6 pt-6 pb-4">
                 <h3 className="text-lg font-bold text-[var(--text-primary)]">
@@ -1770,7 +2023,7 @@ export default function BorrowDetailPage() {
                 )}
               </div>
 
-              <div className="px-6 pb-6 space-y-4">
+              <div ref={borModalContentRef} className="px-6 pb-6 space-y-4">
                 {/* Pool info card — Review & Confirm */}
                 {!isDone && (
                   <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4">

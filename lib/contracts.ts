@@ -3,7 +3,8 @@ import { arbitrumSepolia } from "wagmi/chains";
 export const CHAIN = arbitrumSepolia;
 
 export const LENDING_POOL_ADDRESSES: readonly `0x${string}`[] = [
-  "0x7937eabd49b8087296dddb5fa630080cacf8f71b"
+  "0x7937eabd49b8087296dddb5fa630080cacf8f71b",
+  "0x3db6ef3650d560c27dfc865b04c11068e255e49f",
 ] as const;
 
 export const MULTICALL_ADDRESS = "0xe9a1adc452cd26cae2062d997a97a3800eaaeaa3" as const;

@@ -224,7 +224,6 @@ export default function Sidebar() {
 
         {/* Bottom section */}
         <div ref={bottomRef} className="p-4 border-t border-[var(--border)]">
-          <div className="text-xs text-[var(--text-tertiary)] mb-3">v0.1.0</div>
           <div className="flex items-center gap-3 text-[var(--text-tertiary)]">
             {/* X/Twitter */}
             <a href="#" className="hover:text-[var(--text-secondary)] transition-colors">
