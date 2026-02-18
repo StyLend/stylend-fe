@@ -1113,29 +1113,11 @@ export default function BorrowDetailPage() {
 
                     <div className="bg-[var(--bg-secondary)] rounded-xl p-4">
                       <div className="text-xs text-[var(--text-tertiary)] mb-2">Loan</div>
-                      <div className="flex flex-col gap-2">
-                        {/* Arbitrum loan */}
-                        <div className="flex items-center gap-2">
-                          <div className="relative w-5 h-5 flex-shrink-0">
-                            <TokenIcon symbol={borrowSymbol} size={20} />
-                            <Image src="/chains/arbitrum-logo.png" alt="Arbitrum" width={10} height={10} className="absolute -bottom-0.5 -right-0.5 rounded-full ring-1 ring-[var(--bg-secondary)]" />
-                          </div>
-                          <span className="text-sm font-semibold text-[var(--text-primary)]">
-                            {fmt(userBorrowAmount, borrowDecimals)} {borrowSymbol}
-                          </span>
-                        </div>
-                        {/* Base Sepolia loan */}
-                        {crossChainLoanAmount > 0n && (
-                          <div className="flex items-center gap-2">
-                            <div className="relative w-5 h-5 flex-shrink-0">
-                              <TokenIcon symbol={borrowSymbol} size={20} />
-                              <Image src="/chains/base-logo.png" alt="Base" width={10} height={10} className="absolute -bottom-0.5 -right-0.5 rounded-full ring-1 ring-[var(--bg-secondary)]" />
-                            </div>
-                            <span className="text-sm font-semibold text-[var(--text-primary)]">
-                              {fmt(crossChainLoanAmount, baseToken?.decimals ?? borrowDecimals)} {borrowSymbol}
-                            </span>
-                          </div>
-                        )}
+                      <div className="flex items-center gap-2">
+                        <TokenIcon symbol={borrowSymbol} size={20} />
+                        <span className="text-sm font-semibold text-[var(--text-primary)]">
+                          {fmt(userBorrowAmount + crossChainLoanAmount, borrowDecimals)} {borrowSymbol}
+                        </span>
                       </div>
                     </div>
                   </div>

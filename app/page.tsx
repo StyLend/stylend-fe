@@ -2,7 +2,6 @@
 
 import { useState, useRef, useEffect, useMemo } from "react";
 import Link from "next/link";
-import Image from "next/image";
 import { useAccount, usePublicClient } from "wagmi";
 import { formatUnits } from "viem";
 import { baseSepolia } from "wagmi/chains";
@@ -405,148 +404,6 @@ function EarnPositionsTable({ deposits }: { deposits: PoolPosition[] }) {
   );
 }
 
-function BorrowPositionRow({ pos }: { pos: PoolPosition }) {
-  const { pool, borrowAmount, borrowUsd } = pos;
-
-  return (
-    <Link
-      href={`/borrow/${pool.poolAddress}`}
-      className="block bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl p-5 hover:bg-[var(--bg-card-hover)] transition-colors"
-    >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="relative w-12 h-9 shrink-0">
-            <div className="absolute left-0 z-10">
-              <TokenIcon
-                symbol={pool.collateralSymbol}
-                color={getTokenColor(pool.collateralSymbol)}
-                size={36}
-              />
-            </div>
-            <div className="absolute left-5">
-              <TokenIcon
-                symbol={pool.borrowSymbol}
-                color={getTokenColor(pool.borrowSymbol)}
-                size={36}
-              />
-            </div>
-            <Image
-              src="/chains/arbitrum-logo.png"
-              alt="Arbitrum Sepolia"
-              width={16}
-              height={16}
-              className="absolute -bottom-0.5 left-8 z-20 rounded-full ring-2 ring-[var(--bg-card)]"
-            />
-          </div>
-          <div>
-            <div className="font-semibold text-[var(--text-primary)]">
-              {pool.collateralSymbol}-{pool.borrowSymbol} Pool
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-[var(--text-tertiary)]">
-              <Image
-                src="/chains/arbitrum-logo.png"
-                alt="Arbitrum Sepolia"
-                width={12}
-                height={12}
-                className="rounded-full"
-              />
-              Arbitrum Sepolia
-            </div>
-          </div>
-        </div>
-        <div className="text-right">
-          <div className="text-lg font-bold text-[var(--text-primary)]">
-            {fmt(borrowAmount, pool.borrowDecimals)} {pool.borrowSymbol}
-          </div>
-          <div className="text-xs text-[var(--text-tertiary)]">
-            {formatUsd(borrowUsd)}
-          </div>
-        </div>
-      </div>
-    </Link>
-  );
-}
-
-function CollateralPositionRow({ item }: { item: CollateralItem }) {
-  const { pool, tokenSymbol, tokenDecimals, tokenColor, amount, usd } = item;
-
-  return (
-    <Link
-      href={`/borrow/${pool.poolAddress}`}
-      className="block bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl p-5 hover:bg-[var(--bg-card-hover)] transition-colors"
-    >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <TokenIcon symbol={tokenSymbol} color={tokenColor} size={36} />
-          <div>
-            <div className="font-semibold text-[var(--text-primary)]">
-              {tokenSymbol}
-            </div>
-            <div className="text-xs text-[var(--text-tertiary)]">
-              {pool.collateralSymbol}/{pool.borrowSymbol} Pool
-            </div>
-          </div>
-        </div>
-        <div className="text-right">
-          <div className="text-lg font-bold text-[var(--text-primary)]">
-            {fmt(amount, tokenDecimals)} {tokenSymbol}
-          </div>
-          <div className="text-xs text-[var(--text-tertiary)]">
-            {formatUsd(usd)}
-          </div>
-        </div>
-      </div>
-    </Link>
-  );
-}
-
-function CrossChainLoanRow({ item }: { item: CrossChainLoanItem }) {
-  return (
-    <Link
-      href={`/borrow/${item.pool.poolAddress}`}
-      className="block bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl p-5 hover:bg-[var(--bg-card-hover)] transition-colors"
-    >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="relative">
-            <TokenIcon symbol={item.symbol} color={item.color} size={36} />
-            <Image
-              src={item.chainLogo}
-              alt={item.chainName}
-              width={16}
-              height={16}
-              className="absolute -bottom-0.5 -right-0.5 rounded-full ring-2 ring-[var(--bg-card)]"
-            />
-          </div>
-          <div>
-            <div className="font-semibold text-[var(--text-primary)]">
-              {item.pool.collateralSymbol}-{item.pool.borrowSymbol} Pool
-            </div>
-            <div className="flex items-center gap-1.5 text-xs text-[var(--text-tertiary)]">
-              <Image
-                src={item.chainLogo}
-                alt={item.chainName}
-                width={12}
-                height={12}
-                className="rounded-full"
-              />
-              {item.chainName}
-            </div>
-          </div>
-        </div>
-        <div className="text-right">
-          <div className="text-lg font-bold text-[var(--text-primary)]">
-            {fmt(item.amount, item.decimals)} {item.symbol}
-          </div>
-          <div className="text-xs text-[var(--text-tertiary)]">
-            {formatUsd(item.usd)}
-          </div>
-        </div>
-      </div>
-    </Link>
-  );
-}
-
 // ── Main Dashboard ──
 
 export default function Home() {
@@ -576,8 +433,8 @@ export default function Home() {
   // Fetch user positions across all pools
   const { data: userPositions, isLoading: isLoadingPositions } = useUserPositions(loadedPools, address);
 
-  // Fetch cross-chain loan balances (Base Sepolia) — only for pools with active loans
-  const { data: crossChainLoans, isLoading: isLoadingCrossChain } = useCrossChainLoans(
+  // Fetch cross-chain loan balances (Base Sepolia) — merged into combined loan total
+  const { data: crossChainLoans } = useCrossChainLoans(
     address,
     userPositions?.loans ?? []
   );
@@ -640,17 +497,15 @@ export default function Home() {
     (userPositions?.totalBorrowUsd ?? 0) +
     (crossChainLoans?.reduce((s, l) => s + l.usd, 0) ?? 0);
 
-  // Build combined position rows for the table
+  // Build combined position rows for the table (Arbitrum + crosschain loans merged)
   const positionRows = useMemo(() => {
     if (!userPositions) return [];
-    // Get all pools where user has a position (has collateral or loan)
     const poolMap = new Map<string, {
       pool: PoolData;
       collaterals: CollateralItem[];
       borrowAmount: bigint;
       borrowUsd: number;
       collateralUsd: number;
-      crossChainLoan: CrossChainLoanItem | undefined;
     }>();
 
     // Add from collaterals
@@ -663,7 +518,6 @@ export default function Home() {
           borrowAmount: 0n,
           borrowUsd: 0,
           collateralUsd: 0,
-          crossChainLoan: undefined,
         });
       }
       const entry = poolMap.get(key)!;
@@ -681,7 +535,6 @@ export default function Home() {
           borrowAmount: 0n,
           borrowUsd: 0,
           collateralUsd: 0,
-          crossChainLoan: undefined,
         });
       }
       const entry = poolMap.get(key)!;
@@ -689,20 +542,21 @@ export default function Home() {
       entry.borrowUsd = l.borrowUsd;
     }
 
-    // Attach cross-chain loans
+    // Merge cross-chain loans into the same pool entry
     if (crossChainLoans) {
       for (const cc of crossChainLoans) {
         const key = cc.pool.poolAddress;
         if (poolMap.has(key)) {
-          poolMap.get(key)!.crossChainLoan = cc;
+          const entry = poolMap.get(key)!;
+          entry.borrowAmount = entry.borrowAmount + cc.amount;
+          entry.borrowUsd = entry.borrowUsd + cc.usd;
         } else {
           poolMap.set(key, {
             pool: cc.pool,
             collaterals: [],
-            borrowAmount: 0n,
-            borrowUsd: 0,
+            borrowAmount: cc.amount,
+            borrowUsd: cc.usd,
             collateralUsd: 0,
-            crossChainLoan: cc,
           });
         }
       }
@@ -885,7 +739,7 @@ export default function Home() {
             {/* Rows — one per pool position */}
             {positionRows.map((row) => {
               const healthFactor = row.borrowUsd > 0 ? row.collateralUsd / row.borrowUsd : Infinity;
-              const healthStr = row.borrowUsd === 0 ? "N/A" : healthFactor === Infinity ? "∞" : healthFactor.toFixed(2);
+              const healthStr = row.borrowUsd === 0 ? "—" : healthFactor === Infinity ? "∞" : healthFactor.toFixed(2);
               const healthColor =
                 row.borrowUsd === 0
                   ? "text-[var(--text-tertiary)]"
@@ -921,19 +775,9 @@ export default function Home() {
 
                   {/* Loan */}
                   <div className="flex flex-col gap-1.5">
-                    {/* Arbitrum loan */}
-                    {row.borrowAmount > 0n && (
+                    {row.borrowAmount > 0n ? (
                       <div className="flex items-center gap-1.5">
-                        <div className="relative">
-                          <TokenIcon symbol={row.pool.borrowSymbol} color={getTokenColor(row.pool.borrowSymbol)} size={22} />
-                          <Image
-                            src="/chains/arbitrum-logo.png"
-                            alt="Arbitrum"
-                            width={10}
-                            height={10}
-                            className="absolute -bottom-0.5 -right-0.5 rounded-full ring-1 ring-[var(--bg-card)]"
-                          />
-                        </div>
+                        <TokenIcon symbol={row.pool.borrowSymbol} color={getTokenColor(row.pool.borrowSymbol)} size={22} />
                         <span className="text-sm font-medium text-[var(--text-primary)]">
                           {fmt(row.borrowAmount, row.pool.borrowDecimals)} {row.pool.borrowSymbol}
                         </span>
@@ -941,29 +785,7 @@ export default function Home() {
                           {formatUsd(row.borrowUsd)}
                         </span>
                       </div>
-                    )}
-                    {/* Cross-chain loan (Base Sepolia) */}
-                    {row.crossChainLoan && row.crossChainLoan.amount > 0n && (
-                      <div className="flex items-center gap-1.5">
-                        <div className="relative">
-                          <TokenIcon symbol={row.crossChainLoan.symbol} color={row.crossChainLoan.color} size={22} />
-                          <Image
-                            src="/chains/base-logo.png"
-                            alt="Base Sepolia"
-                            width={10}
-                            height={10}
-                            className="absolute -bottom-0.5 -right-0.5 rounded-full ring-1 ring-[var(--bg-card)]"
-                          />
-                        </div>
-                        <span className="text-sm font-medium text-[var(--text-primary)]">
-                          {fmt(row.crossChainLoan.amount, row.crossChainLoan.decimals)} {row.crossChainLoan.symbol}
-                        </span>
-                        <span className="text-[10px] text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] px-1.5 py-0.5 rounded">
-                          {formatUsd(row.crossChainLoan.usd)}
-                        </span>
-                      </div>
-                    )}
-                    {row.borrowAmount === 0n && !row.crossChainLoan && (
+                    ) : (
                       <span className="text-sm text-[var(--text-tertiary)]">—</span>
                     )}
                   </div>
