@@ -345,6 +345,7 @@ export default function Home() {
   const loansTabRef = useRef<HTMLButtonElement>(null);
   const collateralTabRef = useRef<HTMLButtonElement>(null);
   const isFirstTab = useRef(true);
+  const borrowBalanceRef = useRef<HTMLDivElement>(null);
 
   // Force refetch all dashboard data on mount (after navigating from action pages)
   useEffect(() => {
@@ -386,6 +387,19 @@ export default function Home() {
         ease: "power3.out",
       });
     }
+  }, [borrowTab]);
+
+  // Animate balance digits one by one on tab switch
+  const isFirstBalance = useRef(true);
+  useEffect(() => {
+    if (isFirstBalance.current) { isFirstBalance.current = false; return; }
+    if (!borrowBalanceRef.current) return;
+    const chars = borrowBalanceRef.current.querySelectorAll<HTMLElement>(".balance-char");
+    if (!chars.length) return;
+    gsap.fromTo(chars,
+      { opacity: 0, y: 12 },
+      { opacity: 1, y: 0, duration: 0.25, stagger: 0.03, ease: "power2.out" }
+    );
   }, [borrowTab]);
 
   useEffect(() => {
@@ -585,12 +599,15 @@ export default function Home() {
           {isDataLoading ? (
             <div className="h-10 w-40 bg-[var(--bg-tertiary)] rounded-lg animate-pulse" />
           ) : (
-            <div className="text-4xl font-bold text-[var(--text-primary)]">
-              {isConnected && userPositions
+            <div ref={borrowBalanceRef} className="text-4xl font-bold text-[var(--text-primary)]">
+              {(isConnected && userPositions
                 ? borrowTab === "loans"
                   ? formatUsd(totalLoanUsd)
                   : formatUsd(userPositions.totalCollateralUsd)
-                : "$0.00"}
+                : "$0.00"
+              ).split("").map((ch, i) => (
+                <span key={`${borrowTab}-${ch}-${i}`} className="balance-char inline-block">{ch}</span>
+              ))}
             </div>
           )}
         </div>

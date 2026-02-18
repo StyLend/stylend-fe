@@ -628,7 +628,10 @@ export default function EarnDetailPage() {
                     className="w-full bg-transparent outline-none text-2xl font-semibold text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] mb-2"
                   />
                   <div className="flex items-center justify-between text-xs text-[var(--text-tertiary)]">
-                    <span>
+                    <span className="flex items-center gap-1">
+                      {isConnected && !isLoading && borrowSymbol && (
+                        <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={14} />
+                      )}
                       {isConnected && !isLoading
                         ? `${fmt(walletBalance, borrowDecimals)} ${borrowSymbol}`
                         : "—"}
