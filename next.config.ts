@@ -8,6 +8,7 @@ const nextConfig: NextConfig = {
       { protocol: "https", hostname: "static.optimism.io" },
     ],
   },
+  turbopack: {},
 };
 
 export default nextConfig;

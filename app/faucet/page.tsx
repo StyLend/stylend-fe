@@ -122,17 +122,7 @@ export default function FaucetPage() {
 
   return (
     <div className="space-y-6">
-      <div ref={cardRef} className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-5 border-b border-[var(--border)]">
-          <div className="flex items-center gap-3">
-            <h2 className="text-lg font-semibold text-[var(--text-primary)]">Faucet</h2>
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--accent-glow)] text-xs font-medium text-[var(--accent)]">
-              <Image src="/chains/arbitrum-logo.png" alt="Arbitrum" width={14} height={14} className="rounded-full" />
-              Arbitrum Sepolia
-            </div>
-          </div>
-        </div>
+      <div ref={cardRef} className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl overflow-hidden">
 
         {/* Loading skeleton */}
         {isLoading && (
@@ -190,7 +180,7 @@ export default function FaucetPage() {
                 <col className="w-[20%]" />
               </colgroup>
               <thead>
-                <tr className="border-b border-[var(--border)]">
+                <tr className="border-b border-white/[0.06]">
                   <th className="text-left text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider px-6 py-3">Token</th>
                   <th className="text-center text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider px-6 py-3">Balance</th>
                   <th className="text-center text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider px-6 py-3">Mint Amount</th>
@@ -202,7 +192,7 @@ export default function FaucetPage() {
                   <tr
                     key={token.symbol}
                     ref={(el) => { rowRefs.current[index] = el; }}
-                    className="border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--bg-tertiary)] transition-colors"
+                    className="border-b border-white/[0.06] last:border-b-0 hover:bg-white/[0.05] transition-colors"
                   >
                     {/* Token */}
                     <td className="px-6 py-4">

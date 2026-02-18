@@ -4,12 +4,17 @@ import Sidebar from "@/components/Sidebar";
 import Header from "@/components/Header";
 import PageTransition from "@/components/PageTransition";
 import Providers from "@/components/Providers";
+import WebGLWrapper from "@/components/webgl/WebGLWrapper";
 
 export const metadata: Metadata = {
-  title: "Stylend | Cross-Chain Lending & Borrowing",
-  description: "Cross-chain isolated pools lending and borrowing protocol",
+  title: {
+    template: "Stylend | %s",
+    default: "Stylend | Dashboard",
+  },
+  description: "A cross-chain lending protocol built on Arbitrum Stylus and powered by LayerZero.",
   icons: {
     icon: "/stylend-logo-blue.webp",
+    apple: "/stylend-logo-blue.webp",
   },
 };
 
@@ -36,14 +41,8 @@ export default function RootLayout({
       </head>
       <body className="antialiased">
         <Providers>
-          {/* Blue dot radial glow background */}
-          <div className="fixed inset-0 pointer-events-none z-0" aria-hidden="true">
-            <div className="absolute top-0 left-1/2 -translate-x-1/2 translate-y-[30vh] w-[200vw] h-[100vw] opacity-50"
-              style={{
-                background: "radial-gradient(circle, rgba(1,107,229,0.15) 0%, rgba(1,107,229,0) 70%)",
-              }}
-            />
-          </div>
+          {/* WebGL Background — particles + arm */}
+          <WebGLWrapper />
 
           <Sidebar />
           <div className="lg:ml-[var(--sidebar-width)] min-h-screen flex flex-col relative z-10">

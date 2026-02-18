@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useLayoutEffect, useCallback, useRef } from "react";
+import { useState, useMemo, useEffect, useLayoutEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -13,6 +14,10 @@ import {
 import { parseUnits, formatUnits, maxUint256 } from "viem";
 import { useQueryClient } from "@tanstack/react-query";
 import TokenIcon from "@/components/TokenIcon";
+import AnimatedCheckmark from "@/components/AnimatedCheckmark";
+import PoolAreaChart from "@/components/charts/PoolAreaChart";
+import TimePeriodSelect, { type TimePeriod, filterByTimePeriod } from "@/components/charts/TimePeriodSelect";
+import { usePoolSnapshots } from "@/hooks/usePoolSnapshots";
 import { lendingPoolAbi } from "@/lib/abis/lending-pool-abi";
 import { lendingPoolRouterAbi } from "@/lib/abis/lending-pool-router-abi";
 import { lendingPoolFactoryAbi } from "@/lib/abis/lending-pool-factory-abi";
@@ -61,6 +66,8 @@ export default function EarnDetailPage() {
   const [wErrorMsg, setWErrorMsg] = useState("");
   const [activeTab, setActiveTab] = useState<"overview" | "position">("overview");
   const [sidebarTab, setSidebarTab] = useState<"deposit" | "withdraw">("deposit");
+  const [depositsPeriod, setDepositsPeriod] = useState<TimePeriod>("3M");
+  const [apyPeriod, setApyPeriod] = useState<TimePeriod>("1M");
   const [showDepositModal, setShowDepositModal] = useState(false);
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
   const [needsApproval, setNeedsApproval] = useState(false);
@@ -193,6 +200,22 @@ export default function EarnDetailPage() {
       : 0.1;
     return borrowRateNum * utilizationNum * (1 - reserveFactorNum) * 100;
   })();
+
+  // ── Chart data ──
+  const { data: snapshotData, isLoading: snapshotsLoading } = usePoolSnapshots(
+    routerAddress as string | undefined,
+    borrowDecimals,
+    18, // collateralDecimals not used on earn page
+    !isLoading,
+  );
+  const depositsChartData = useMemo(
+    () => (snapshotData ? filterByTimePeriod(snapshotData, depositsPeriod) : []),
+    [snapshotData, depositsPeriod],
+  );
+  const apyChartData = useMemo(
+    () => (snapshotData ? filterByTimePeriod(snapshotData, apyPeriod) : []),
+    [snapshotData, apyPeriod],
+  );
 
   // ── Write hooks ──
   const { writeContract: writeApprove, data: approveTxHash, reset: resetApprove } = useWriteContract();
@@ -456,7 +479,7 @@ export default function EarnDetailPage() {
       </Link>
 
       {/* Tabs */}
-      <div className="flex gap-6 border-b border-[var(--border)]">
+      <div className="flex gap-6 border-b border-white/[0.06]">
         {(["overview", "position"] as const).map((tab) => (
           <button
             key={tab}
@@ -478,26 +501,11 @@ export default function EarnDetailPage() {
         <div ref={leftRef} className="space-y-6">
           {activeTab === "overview" ? (
             <>
-              {/* Total Deposits card */}
-              <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-6">
-                <div className="text-xs text-[var(--text-tertiary)] mb-1">
-                  Total Deposits {borrowSymbol ? `(${borrowSymbol})` : ""}
-                </div>
-                {isLoading ? (
-                  <Skeleton className="h-9 w-48" />
-                ) : (
-                  <div className="text-3xl font-bold text-[var(--text-primary)]">
-                    {totalSupplyAssets !== undefined ? fmt(totalSupplyAssets, borrowDecimals) : "0.00"}
-                    <span className="text-lg font-normal text-[var(--text-tertiary)] ml-2">{borrowSymbol}</span>
-                  </div>
-                )}
-              </div>
-
               {/* Pool stats grid */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {isLoading ? (
                   Array.from({ length: 4 }).map((_, i) => (
-                    <div key={i} className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4 space-y-2">
+                    <div key={i} className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-4 space-y-2">
                       <Skeleton className="h-3 w-20" />
                       <Skeleton className="h-5 w-24" />
                     </div>
@@ -516,14 +524,94 @@ export default function EarnDetailPage() {
                 )}
               </div>
 
+              {/* Total Deposits chart */}
+              <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-6">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-[var(--text-tertiary)]">
+                    Total Deposits {borrowSymbol ? `(${borrowSymbol})` : ""}
+                  </span>
+                  <TimePeriodSelect value={depositsPeriod} onChange={setDepositsPeriod} />
+                </div>
+                {isLoading ? (
+                  <Skeleton className="h-9 w-48 mb-4" />
+                ) : (
+                  <div className="text-3xl font-bold text-[var(--text-primary)] mb-4">
+                    {totalSupplyAssets !== undefined ? fmt(totalSupplyAssets, borrowDecimals) : "0.00"}
+                    <span className="text-lg font-normal text-[var(--text-tertiary)] ml-2">{borrowSymbol}</span>
+                  </div>
+                )}
+                {snapshotsLoading ? (
+                  <Skeleton className="h-[220px] w-full rounded-lg" />
+                ) : depositsChartData.length > 0 ? (
+                  <PoolAreaChart
+                    data={depositsChartData}
+                    dataKey="totalDeposits"
+                    gradientId="depositsGradient"
+                    formatValue={(v) =>
+                      v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    }
+                    yAxisFormatter={(v) =>
+                      v >= 1e6
+                        ? `${(v / 1e6).toFixed(1)}M`
+                        : v >= 1e3
+                        ? `${(v / 1e3).toFixed(0)}K`
+                        : `${v}`
+                    }
+                  />
+                ) : (
+                  <div className="h-[220px] flex items-center justify-center text-sm text-[var(--text-tertiary)]">
+                    No historical data available
+                  </div>
+                )}
+              </div>
+
+              {/* APY chart */}
+              <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-6">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-[var(--text-tertiary)]">APY</span>
+                  <TimePeriodSelect value={apyPeriod} onChange={setApyPeriod} />
+                </div>
+                <div className="text-3xl font-bold text-[var(--accent)] mb-4">
+                  {supplyApy.toFixed(2)}<span className="text-xl">%</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-[1fr_180px] gap-4">
+                  <div>
+                    {snapshotsLoading ? (
+                      <Skeleton className="h-[220px] w-full rounded-lg" />
+                    ) : apyChartData.length > 0 ? (
+                      <PoolAreaChart
+                        data={apyChartData}
+                        dataKey="supplyApy"
+                        gradientId="apyGradient"
+                        formatValue={(v) => `${v.toFixed(2)}%`}
+                        yAxisFormatter={(v) => `${v.toFixed(1)}%`}
+                      />
+                    ) : (
+                      <div className="h-[220px] flex items-center justify-center text-sm text-[var(--text-tertiary)]">
+                        No historical data available
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-3 md:border-l md:border-white/[0.06] md:pl-4">
+                    <div className="flex items-center justify-between md:block">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <div className="w-3 h-3 rounded-sm bg-[var(--accent)]" />
+                        <span className="text-xs text-[var(--text-tertiary)]">APY</span>
+                      </div>
+                      <span className="text-sm font-medium text-[var(--text-primary)]">{supplyApy.toFixed(2)}%</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               {/* Pool details */}
-              <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-6 space-y-4">
+              <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-6 space-y-4">
                 <h3 className="text-sm font-semibold text-[var(--text-primary)]">Pool Details</h3>
 
                 {isLoading ? (
                   <div className="space-y-4">
                     {Array.from({ length: 4 }).map((_, i) => (
-                      <div key={i} className="flex items-center justify-between py-2 border-b border-[var(--border)] last:border-b-0">
+                      <div key={i} className="flex items-center justify-between py-2 border-b border-white/[0.06] last:border-b-0">
                         <Skeleton className="h-3 w-28" />
                         <Skeleton className="h-4 w-32" />
                       </div>
@@ -561,7 +649,7 @@ export default function EarnDetailPage() {
             </>
           ) : (
             /* Position tab */
-            <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-6">
+            <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-6">
               {!isConnected ? (
                 <div className="text-center py-12 text-sm text-[var(--text-tertiary)]">
                   Connect your wallet to view your position.
@@ -569,7 +657,7 @@ export default function EarnDetailPage() {
               ) : isLoading ? (
                 <div className="space-y-4">
                   <Skeleton className="h-5 w-32" />
-                  <div className="bg-[var(--bg-secondary)] rounded-xl p-4 space-y-2">
+                  <div className="bg-white/[0.04] rounded-xl p-4 space-y-2">
                     <Skeleton className="h-3 w-20" />
                     <Skeleton className="h-6 w-24" />
                   </div>
@@ -577,7 +665,7 @@ export default function EarnDetailPage() {
               ) : (
                 <div className="space-y-6">
                   <h3 className="text-sm font-semibold text-[var(--text-primary)]">Your Position</h3>
-                  <div className="bg-[var(--bg-secondary)] rounded-xl p-4">
+                  <div className="bg-white/[0.04] rounded-xl p-4">
                     <div className="text-xs text-[var(--text-tertiary)] mb-2">Deposited</div>
                     <div className="flex items-center gap-2">
                       <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={24} />
@@ -594,16 +682,16 @@ export default function EarnDetailPage() {
 
         {/* ──── Right side: Deposit / Withdraw sidebar ──── */}
         <div ref={rightRef} className="lg:sticky lg:top-6">
-          <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-5">
+          <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-5">
             {/* Tab selector */}
-            <div className="flex mb-5 bg-[var(--bg-secondary)] rounded-lg p-1">
+            <div className="flex mb-5 bg-white/[0.04] rounded-lg p-1">
               {(["deposit", "withdraw"] as const).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => { setSidebarTab(tab); if (tab === "deposit") resetWTx(); else resetTx(); }}
                   className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer capitalize ${
                     sidebarTab === tab
-                      ? "bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm"
+                      ? "bg-white/[0.08] text-[var(--text-primary)] shadow-sm"
                       : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
                   }`}
                 >
@@ -615,7 +703,7 @@ export default function EarnDetailPage() {
             {sidebarTab === "deposit" ? (
               /* ── Deposit ── */
               <>
-                <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-3">
+                <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-3">
                   <input
                     type="text"
                     inputMode="decimal"
@@ -648,7 +736,7 @@ export default function EarnDetailPage() {
                   </div>
                 </div>
 
-                <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4 space-y-2.5">
+                <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4 space-y-2.5">
                   <div className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
                       {borrowSymbol ? (
@@ -698,7 +786,7 @@ export default function EarnDetailPage() {
             ) : (
               /* ── Withdraw ── */
               <>
-                <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-3">
+                <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-3">
                   <input
                     type="text"
                     inputMode="decimal"
@@ -727,7 +815,7 @@ export default function EarnDetailPage() {
                   </div>
                 </div>
 
-                <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4 space-y-2.5">
+                <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4 space-y-2.5">
                   <div className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
                       {borrowSymbol ? (
@@ -776,7 +864,7 @@ export default function EarnDetailPage() {
       </div>
 
       {/* ── Confirm Deposit Modal ── */}
-      {showDepositModal && (() => {
+      {showDepositModal && createPortal((() => {
         const isReview = txStep === "idle" || txStep === "error";
         const isConfirming = txStep === "approving" || txStep === "supplying";
         const isDone = txStep === "success";
@@ -789,7 +877,7 @@ export default function EarnDetailPage() {
               className="absolute inset-0 bg-black/60 backdrop-blur-sm"
               onClick={() => { if (isReview || isDone) { resetTx(); setShowDepositModal(false); if (isDone) setSupplyAmount(""); } }}
             />
-            <div ref={depositCardRef} className="relative z-10 w-full max-w-[420px] mx-4 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
+            <div ref={depositCardRef} className="relative z-10 w-full max-w-[420px] mx-4 bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden">
               {/* Header */}
               <div className="flex items-center justify-between px-6 pt-6 pb-4">
                 <h3 className="text-lg font-bold text-[var(--text-primary)]">
@@ -810,7 +898,7 @@ export default function EarnDetailPage() {
               <div ref={depositContentRef} className="px-6 pb-6 space-y-4">
                 {/* Pool info card — Review & Confirm */}
                 {!isDone && (
-                  <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4">
+                  <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4">
                     <div className="flex items-center gap-2 mb-4">
                       <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={24} />
                       <span className="text-sm font-semibold text-[var(--text-primary)]">
@@ -828,7 +916,7 @@ export default function EarnDetailPage() {
                 {/* Review phase */}
                 {isReview && (
                   <>
-                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 space-y-3">
+                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 space-y-3">
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-[var(--text-tertiary)]">Deposit ({borrowSymbol})</span>
                         <span className="text-[var(--text-primary)] font-medium">{supplyAmount}</span>
@@ -910,10 +998,8 @@ export default function EarnDetailPage() {
                 {isDone && (
                   <div className="space-y-4">
                     <div className="flex flex-col items-center py-4">
-                      <div className="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center mb-3">
-                        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                          <path d="M7 14l5 5 9-9" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
+                      <div className="mb-3">
+                        <AnimatedCheckmark />
                       </div>
                       <p className="text-sm text-[var(--text-secondary)]">Deposit successful</p>
                     </div>
@@ -946,10 +1032,10 @@ export default function EarnDetailPage() {
             </div>
           </div>
         );
-      })()}
+      })(), document.body)}
 
       {/* ── Confirm Withdraw Modal ── */}
-      {showWithdrawModal && (() => {
+      {showWithdrawModal && createPortal((() => {
         const isReview = wTxStep === "idle" || wTxStep === "error";
         const isConfirming = wTxStep === "approving" || wTxStep === "withdrawing";
         const isDone = wTxStep === "success";
@@ -968,7 +1054,7 @@ export default function EarnDetailPage() {
               className="absolute inset-0 bg-black/60 backdrop-blur-sm"
               onClick={() => { if (isReview || isDone) { resetWTx(); setShowWithdrawModal(false); if (isDone) setWithdrawShares(""); } }}
             />
-            <div ref={withdrawCardRef} className="relative z-10 w-full max-w-[420px] mx-4 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
+            <div ref={withdrawCardRef} className="relative z-10 w-full max-w-[420px] mx-4 bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden">
               {/* Header */}
               <div className="flex items-center justify-between px-6 pt-6 pb-4">
                 <h3 className="text-lg font-bold text-[var(--text-primary)]">
@@ -989,7 +1075,7 @@ export default function EarnDetailPage() {
               <div ref={withdrawContentRef} className="px-6 pb-6 space-y-4">
                 {/* Pool info card — Review & Confirm */}
                 {!isDone && (
-                  <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4">
+                  <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4">
                     <div className="flex items-center gap-2 mb-4">
                       <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={24} />
                       <span className="text-sm font-semibold text-[var(--text-primary)]">
@@ -1012,7 +1098,7 @@ export default function EarnDetailPage() {
                 {/* Review phase */}
                 {isReview && (
                   <>
-                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 space-y-3">
+                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 space-y-3">
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-[var(--text-tertiary)]">Withdraw ({borrowSymbol})</span>
                         <span className="text-[var(--text-primary)] font-medium">{fmt(estimatedUnderlying, borrowDecimals)}</span>
@@ -1090,10 +1176,8 @@ export default function EarnDetailPage() {
                 {isDone && (
                   <div className="space-y-4">
                     <div className="flex flex-col items-center py-4">
-                      <div className="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center mb-3">
-                        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                          <path d="M7 14l5 5 9-9" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
+                      <div className="mb-3">
+                        <AnimatedCheckmark />
                       </div>
                       <p className="text-sm text-[var(--text-secondary)]">Withdraw successful</p>
                     </div>
@@ -1126,7 +1210,7 @@ export default function EarnDetailPage() {
             </div>
           </div>
         );
-      })()}
+      })(), document.body)}
     </div>
   );
 }
@@ -1143,7 +1227,7 @@ function StatCard({
   extra?: React.ReactNode;
 }) {
   return (
-    <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4">
+    <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-4">
       <div className="text-xs text-[var(--text-tertiary)] mb-1">{label}</div>
       <div className="flex items-center gap-2">
         <span className={`text-sm font-semibold ${accent ? "text-[var(--accent)]" : "text-[var(--text-primary)]"}`}>
@@ -1157,7 +1241,7 @@ function StatCard({
 
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between py-2 border-b border-[var(--border)] last:border-b-0">
+    <div className="flex items-center justify-between py-2 border-b border-white/[0.06] last:border-b-0">
       <span className="text-xs text-[var(--text-tertiary)]">{label}</span>
       {children}
     </div>

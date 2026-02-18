@@ -32,7 +32,7 @@ function EarnPoolRow({ poolAddress }: { poolAddress: `0x${string}` }) {
   return (
     <Link
       href={`/earn/${poolAddress}`}
-      className="grid md:grid-cols-[2fr_1fr_1.2fr_1.2fr_0.8fr] items-center px-6 py-5 border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--bg-card-hover)] transition-colors cursor-pointer"
+      className="grid md:grid-cols-[2fr_1fr_1.2fr_1.2fr_0.8fr] items-center px-6 py-5 border-b border-white/[0.06] last:border-b-0 hover:bg-white/[0.05] transition-colors cursor-pointer"
     >
       {/* Asset — supply token */}
       <div className="flex items-center gap-3">
@@ -123,9 +123,9 @@ export default function EarnPage() {
 
   return (
     <div className="space-y-6">
-      <div ref={cardRef} className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl overflow-hidden">
+      <div ref={cardRef} className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl overflow-hidden">
         {/* Table header */}
-        <div className="hidden md:grid grid-cols-[2fr_1fr_1.2fr_1.2fr_0.8fr] px-6 py-3 border-b border-[var(--border)]">
+        <div className="hidden md:grid grid-cols-[2fr_1fr_1.2fr_1.2fr_0.8fr] px-6 py-3 border-b border-white/[0.06]">
           <div className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Asset</div>
           <div className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Collateral</div>
           <div className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider text-right">Total Deposits</div>

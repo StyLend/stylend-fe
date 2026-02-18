@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useEffect, useState, useMemo, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { gsap } from "@/hooks/useGsap";
 import {
   useAccount,
@@ -12,7 +13,9 @@ import {
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { parseUnits, formatUnits, type Address } from "viem";
 import { useQueryClient } from "@tanstack/react-query";
+import Image from "next/image";
 import TokenIcon from "@/components/TokenIcon";
+import AnimatedCheckmark from "@/components/AnimatedCheckmark";
 import { lendingPoolAbi } from "@/lib/abis/lending-pool-abi";
 import { lendingPoolRouterAbi } from "@/lib/abis/lending-pool-router-abi";
 import { lendingPoolFactoryAbi } from "@/lib/abis/lending-pool-factory-abi";
@@ -80,6 +83,9 @@ export default function TradeCollateralPage() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [txStep, setTxStep] = useState<"idle" | "review" | "swapping" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [chainDropdownOpen, setChainDropdownOpen] = useState(false);
+  const chainDropdownMenuRef = useRef<HTMLDivElement>(null);
+  const chainDropdownWrapperRef = useRef<HTMLDivElement>(null);
 
   const activeSlippage = customSlippage && Number(customSlippage) > 0 ? Number(customSlippage) : slippage;
 
@@ -523,15 +529,86 @@ export default function TradeCollateralPage() {
     }
   }, [tokenModalVisible]);
 
+  // Chain dropdown: GSAP animation
+  useEffect(() => {
+    const el = chainDropdownMenuRef.current;
+    if (!el) return;
+    if (chainDropdownOpen) {
+      gsap.fromTo(el,
+        { scaleY: 0, opacity: 0, transformOrigin: "top center" },
+        { scaleY: 1, opacity: 1, duration: 0.25, ease: "back.out(1.4)" }
+      );
+    }
+  }, [chainDropdownOpen]);
+
+  // Chain dropdown: close on outside click
+  useEffect(() => {
+    if (!chainDropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (chainDropdownWrapperRef.current && !chainDropdownWrapperRef.current.contains(e.target as Node)) {
+        setChainDropdownOpen(false);
+      }
+    };
+    const id = setTimeout(() => document.addEventListener("mousedown", handler), 0);
+    return () => { clearTimeout(id); document.removeEventListener("mousedown", handler); };
+  }, [chainDropdownOpen]);
+
   // ── Render ──
 
   return (
     <div className="flex justify-center pt-4">
       <div ref={cardRef} className="w-full max-w-[480px]">
-        <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl p-5">
+        <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl p-5">
           {/* Header */}
           <div className="flex items-center justify-between mb-5">
-            <h2 className="text-lg font-semibold text-[var(--text-primary)]">Trade Collateral</h2>
+            {/* Chain selector */}
+            <div ref={chainDropdownWrapperRef} className="relative">
+              <button
+                onClick={() => setChainDropdownOpen(!chainDropdownOpen)}
+                className="flex items-center gap-1.5 px-2 py-1.5 rounded-lg border border-white/[0.1] hover:border-white/[0.2] bg-white/[0.04] transition-all cursor-pointer"
+              >
+                <Image src="/chains/arbitrum-logo.png" alt="Arbitrum" width={20} height={20} className="rounded-full" />
+                <svg
+                  width="12" height="12" viewBox="0 0 12 12" fill="none"
+                  className={`text-[var(--text-tertiary)] transition-transform duration-200 ${chainDropdownOpen ? "rotate-180" : ""}`}
+                >
+                  <path d="M3 4.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              {chainDropdownOpen && (
+                <div
+                  ref={chainDropdownMenuRef}
+                  className="absolute z-50 top-[calc(100%+6px)] left-0 w-52 bg-[rgba(8,12,28,0.85)] backdrop-blur-md border border-white/[0.08] rounded-lg shadow-xl overflow-hidden"
+                >
+                  {[
+                    { name: "Arbitrum Sepolia", logo: "/chains/arbitrum-logo.png", active: true },
+                    { name: "Base", logo: "/chains/base-logo.png", soon: true },
+                    { name: "Hyperliquid", logo: "/chains/hyperliquid-logo.png", soon: true },
+                    { name: "MegaETH", logo: "/chains/megaeth.png", soon: true },
+                  ].map((chain) => (
+                    <button
+                      key={chain.name}
+                      disabled={chain.soon}
+                      onClick={() => { if (!chain.soon) setChainDropdownOpen(false); }}
+                      className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-medium transition-colors ${
+                        chain.soon
+                          ? "opacity-50 cursor-not-allowed"
+                          : chain.active
+                          ? "bg-blue-500/10 text-blue-400 cursor-pointer"
+                          : "text-[var(--text-primary)] hover:bg-white/[0.05] cursor-pointer"
+                      }`}
+                    >
+                      <Image src={chain.logo} alt={chain.name} width={20} height={20} className="rounded-full shrink-0" />
+                      <span className="flex-1 text-left">{chain.name}</span>
+                      {chain.soon && (
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-500/15 text-blue-400">Soon</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <button
               onClick={() => setShowSettings(!showSettings)}
               className="p-2 rounded-lg hover:bg-[var(--bg-tertiary)] transition-colors cursor-pointer"
@@ -546,7 +623,7 @@ export default function TradeCollateralPage() {
 
           {/* Settings panel */}
           {settingsVisible && (
-            <div ref={settingsRef} className="p-4 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl space-y-4 overflow-hidden">
+            <div ref={settingsRef} className="p-4 bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl space-y-4 overflow-hidden">
               <div>
                 <div className="text-xs font-medium text-[var(--text-tertiary)] mb-2">Slippage Tolerance</div>
                 <div className="flex gap-2">
@@ -601,7 +678,7 @@ export default function TradeCollateralPage() {
           {/* ── Form (always visible) ── */}
           <>
             {/* ── You Pay ── */}
-            <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-2xl p-4 mb-1.5">
+            <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-2xl p-4 mb-1.5">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs text-[var(--text-tertiary)]">Sell</span>
                 {isConnected && (
@@ -623,7 +700,7 @@ export default function TradeCollateralPage() {
                 />
                 <button
                   onClick={() => openTokenModal("in")}
-                  className="flex items-center gap-2 px-3 py-2 rounded-full bg-[var(--bg-tertiary)] hover:bg-[var(--bg-card-hover)] transition-colors cursor-pointer shrink-0"
+                  className="flex items-center gap-2 px-3 py-2 rounded-full bg-[var(--bg-tertiary)] hover:bg-white/[0.05] transition-colors cursor-pointer shrink-0"
                 >
                   <TokenIcon symbol={tokenIn.symbol} color={tokenIn.color} size={24} />
                   <span className="text-sm font-semibold text-[var(--text-primary)]">{tokenIn.symbol}</span>
@@ -661,7 +738,7 @@ export default function TradeCollateralPage() {
             </div>
 
             {/* ── You Receive ── */}
-            <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-2xl p-4 mt-1.5">
+            <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-2xl p-4 mt-1.5">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-xs text-[var(--text-tertiary)]">Buy</span>
               </div>
@@ -676,7 +753,7 @@ export default function TradeCollateralPage() {
                 </div>
                 <button
                   onClick={() => openTokenModal("out")}
-                  className="flex items-center gap-2 px-3 py-2 rounded-full bg-[var(--bg-tertiary)] hover:bg-[var(--bg-card-hover)] transition-colors cursor-pointer shrink-0"
+                  className="flex items-center gap-2 px-3 py-2 rounded-full bg-[var(--bg-tertiary)] hover:bg-white/[0.05] transition-colors cursor-pointer shrink-0"
                 >
                   <TokenIcon symbol={tokenOut.symbol} color={tokenOut.color} size={24} />
                   <span className="text-sm font-semibold text-[var(--text-primary)]">{tokenOut.symbol}</span>
@@ -694,7 +771,7 @@ export default function TradeCollateralPage() {
 
             {/* ── Rate & details ── */}
             {rateVisible && (
-              <div ref={rateDetailsRef} className="p-3.5 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl space-y-2.5 overflow-hidden">
+              <div ref={rateDetailsRef} className="p-3.5 bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl space-y-2.5 overflow-hidden">
                 <div className="flex items-center justify-between text-sm">
                   <span className="text-[var(--text-tertiary)]">Rate</span>
                   <span className="text-[var(--text-secondary)]">
@@ -756,14 +833,14 @@ export default function TradeCollateralPage() {
       </div>
 
       {/* ── Confirm Modal (Review / Loading / Done) ── */}
-      {showConfirmModal && (
+      {showConfirmModal && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center">
           <div
             ref={confirmBackdropRef}
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             onClick={() => { if (txStep === "review" || txStep === "success") closeConfirmModal(); }}
           />
-          <div ref={confirmCardRef} className="relative z-10 w-full max-w-[420px] mx-4 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
+          <div ref={confirmCardRef} className="relative z-10 w-full max-w-[420px] mx-4 bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden">
             {/* Header */}
             <div className="flex items-center justify-between px-6 pt-6 pb-4">
               <h3 className="text-lg font-bold text-[var(--text-primary)]">
@@ -785,7 +862,7 @@ export default function TradeCollateralPage() {
               {/* ── Review ── */}
               {txStep === "review" && (
                 <>
-                  <div className="modal-row bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4">
+                  <div className="modal-row bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4">
                     <div className="text-xs text-[var(--text-tertiary)] mb-2">You Sell</div>
                     <div className="flex items-center gap-2.5">
                       <TokenIcon symbol={tokenIn.symbol} color={tokenIn.color} size={32} />
@@ -797,14 +874,14 @@ export default function TradeCollateralPage() {
                   </div>
 
                   <div className="flex justify-center -my-2 relative z-10">
-                    <div className="w-8 h-8 rounded-lg bg-[var(--bg-card)] border-2 border-[var(--border)] flex items-center justify-center">
+                    <div className="w-8 h-8 rounded-lg bg-[var(--bg-card)] border-2 border-white/[0.06] flex items-center justify-center">
                       <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="text-[var(--text-tertiary)]">
                         <path d="M7 3v8M7 11l-3-3M7 11l3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                       </svg>
                     </div>
                   </div>
 
-                  <div className="modal-row bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4">
+                  <div className="modal-row bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4">
                     <div className="text-xs text-[var(--text-tertiary)] mb-2">You Receive</div>
                     <div className="flex items-center gap-2.5">
                       <TokenIcon symbol={tokenOut.symbol} color={tokenOut.color} size={32} />
@@ -815,7 +892,7 @@ export default function TradeCollateralPage() {
                     </div>
                   </div>
 
-                  <div className="modal-row bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-3.5 space-y-2.5">
+                  <div className="modal-row bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-3.5 space-y-2.5">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-[var(--text-tertiary)]">Rate</span>
                       <span className="text-[var(--text-secondary)]">1 {tokenIn.symbol} = {formatNum(rate, 4)} {tokenOut.symbol}</span>
@@ -846,6 +923,30 @@ export default function TradeCollateralPage() {
               {/* ── Loading / Confirming ── */}
               {txStep === "swapping" && (
                 <div className="space-y-4">
+                  {/* Swap summary */}
+                  <div className="modal-row bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <TokenIcon symbol={tokenIn.symbol} color={tokenIn.color} size={28} />
+                        <div>
+                          <div className="text-sm font-semibold text-[var(--text-primary)]">{amountIn} {tokenIn.symbol}</div>
+                          <div className="text-xs text-[var(--text-tertiary)]">${formatNum(inputUsdValue, 2)}</div>
+                        </div>
+                      </div>
+                      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" className="text-[var(--text-tertiary)] mx-2">
+                        <path d="M4 10h12M12 6l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      <div className="flex items-center gap-2.5">
+                        <div className="text-right">
+                          <div className="text-sm font-semibold text-[var(--text-primary)]">~{formatNum(estimatedOutput, 2)} {tokenOut.symbol}</div>
+                          <div className="text-xs text-[var(--text-tertiary)]">${formatNum(outputUsdValue, 2)}</div>
+                        </div>
+                        <TokenIcon symbol={tokenOut.symbol} color={tokenOut.color} size={28} />
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Tx hash */}
                   {swapTxHash && (
                     <div className="modal-row flex items-center justify-between">
                       <span className="text-xs text-[var(--text-tertiary)]">Swap Collateral</span>
@@ -863,6 +964,7 @@ export default function TradeCollateralPage() {
                     </div>
                   )}
 
+                  {/* Progress bar */}
                   <div className="modal-row w-full h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
                     <div
                       className="h-full bg-[var(--accent)] rounded-full animate-pulse"
@@ -870,6 +972,7 @@ export default function TradeCollateralPage() {
                     />
                   </div>
 
+                  {/* Status message */}
                   <div className="modal-row flex items-center justify-center gap-2 py-2">
                     <svg className="animate-spin h-4 w-4 text-[var(--accent)]" viewBox="0 0 24 24" fill="none">
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
@@ -901,15 +1004,13 @@ export default function TradeCollateralPage() {
               {txStep === "success" && (
                 <div className="space-y-4">
                   <div className="modal-row flex flex-col items-center py-4">
-                    <div className="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center mb-3">
-                      <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                        <path d="M7 14l5 5 9-9" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
+                    <div className="mb-3">
+                      <AnimatedCheckmark />
                     </div>
                     <p className="text-sm text-[var(--text-secondary)]">Collateral swapped successfully</p>
                   </div>
 
-                  <div className="modal-row bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-3.5 space-y-2.5">
+                  <div className="modal-row bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-3.5 space-y-2.5">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-[var(--text-tertiary)]">Sold</span>
                       <div className="flex items-center gap-1.5">
@@ -952,19 +1053,20 @@ export default function TradeCollateralPage() {
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
 
       {/* ── Token Selector Modal ── */}
-      {selectingFor && (
+      {selectingFor && createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
             ref={tokenModalBackdropRef}
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
             onClick={closeTokenModal}
           />
-          <div ref={tokenModalCardRef} className="relative bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl w-full max-w-sm overflow-hidden">
-            <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)]">
+          <div ref={tokenModalCardRef} className="relative bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl w-full max-w-sm overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">
               <h3 className="text-base font-semibold text-[var(--text-primary)]">Select Token</h3>
               <button
                 onClick={closeTokenModal}
@@ -1017,7 +1119,8 @@ export default function TradeCollateralPage() {
               })}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

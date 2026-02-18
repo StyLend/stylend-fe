@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useLayoutEffect, useCallback, useRef, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import Image from "next/image";
@@ -15,6 +16,11 @@ import {
 import { parseUnits, formatUnits, maxUint256, encodePacked } from "viem";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import TokenIcon from "@/components/TokenIcon";
+import AnimatedCheckmark from "@/components/AnimatedCheckmark";
+import PoolAreaChart from "@/components/charts/PoolAreaChart";
+import TimePeriodSelect, { type TimePeriod, filterByTimePeriod } from "@/components/charts/TimePeriodSelect";
+import InterestRateModelChart from "@/components/charts/InterestRateModelChart";
+import { usePoolSnapshots } from "@/hooks/usePoolSnapshots";
 import { lendingPoolAbi } from "@/lib/abis/lending-pool-abi";
 import { lendingPoolRouterAbi } from "@/lib/abis/lending-pool-router-abi";
 import { lendingPoolFactoryAbi } from "@/lib/abis/lending-pool-factory-abi";
@@ -37,10 +43,13 @@ interface DestChain {
   name: string;
   eid: number;
   logo: string;
+  soon?: boolean;
 }
 
 const DEST_CHAINS: DestChain[] = [
   { name: "Base Sepolia", eid: 40245, logo: "/chains/base-logo.png" },
+  { name: "Hyperliquid", eid: 0, logo: "/chains/hyperliquid-logo.png", soon: true },
+  { name: "MegaETH", eid: 0, logo: "/chains/megaeth.png", soon: true },
 ];
 
 const TOKEN_COLORS: Record<string, string> = {
@@ -109,6 +118,9 @@ export default function BorrowDetailPage() {
   const [withdrawColAmount, setWithdrawColAmount] = useState("");
   const [wcTxStep, setWcTxStep] = useState<"idle" | "withdrawing" | "success" | "error">("idle");
   const [wcErrorMsg, setWcErrorMsg] = useState("");
+  const [collateralPeriod, setCollateralPeriod] = useState<TimePeriod>("3M");
+  const [borrowsPeriod, setBorrowsPeriod] = useState<TimePeriod>("3M");
+  const [ratePeriod, setRatePeriod] = useState<TimePeriod>("1M");
 
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
@@ -116,6 +128,9 @@ export default function BorrowDetailPage() {
   const borrowFormRef = useRef<HTMLDivElement>(null);
   const repayFormRef = useRef<HTMLDivElement>(null);
   const chainDropdownRef = useRef<HTMLDivElement>(null);
+  const crossChainContentRef = useRef<HTMLDivElement>(null);
+  const dropdownMenuRef = useRef<HTMLDivElement>(null);
+  const prevDestChainRef = useRef<typeof destChain>(null);
   const colModalBackdropRef = useRef<HTMLDivElement>(null);
   const colModalCardRef = useRef<HTMLDivElement>(null);
   const colModalContentRef = useRef<HTMLDivElement>(null);
@@ -371,6 +386,26 @@ export default function BorrowDetailPage() {
       : 0;
 
   const borrowApy = borrowRate ? Number(borrowRate) / 1e18 * 100 : 0;
+
+  // ── Chart data ──
+  const { data: snapshotData, isLoading: snapshotsLoading } = usePoolSnapshots(
+    routerAddress as string | undefined,
+    borrowDecimals,
+    collateralDecimals,
+    !isLoading,
+  );
+  const collateralChartData = useMemo(
+    () => (snapshotData ? filterByTimePeriod(snapshotData, collateralPeriod) : []),
+    [snapshotData, collateralPeriod],
+  );
+  const borrowsChartData = useMemo(
+    () => (snapshotData ? filterByTimePeriod(snapshotData, borrowsPeriod) : []),
+    [snapshotData, borrowsPeriod],
+  );
+  const rateChartData = useMemo(
+    () => (snapshotData ? filterByTimePeriod(snapshotData, ratePeriod) : []),
+    [snapshotData, ratePeriod],
+  );
 
   const supplyApy = (() => {
     if (!totalSupplyAssets || totalSupplyAssets === 0n || borrowRate === undefined) return 0;
@@ -858,10 +893,49 @@ export default function BorrowDetailPage() {
         setChainDropdownOpen(false);
       }
     };
-    // Use setTimeout so the current click event finishes before listener is active
     const id = setTimeout(() => document.addEventListener("mousedown", handler), 0);
     return () => { clearTimeout(id); document.removeEventListener("mousedown", handler); };
   }, [chainDropdownOpen]);
+
+  // GSAP: animate cross-chain section slide in
+  useEffect(() => {
+    const el = crossChainContentRef.current;
+    if (!el) return;
+    if (isCrossChain) {
+      gsap.fromTo(el,
+        { y: -10, opacity: 0 },
+        { y: 0, opacity: 1, duration: 0.35, ease: "power3.out" }
+      );
+    }
+  }, [isCrossChain]);
+
+  // GSAP: animate dropdown menu open
+  useEffect(() => {
+    const el = dropdownMenuRef.current;
+    if (!el) return;
+    if (chainDropdownOpen) {
+      gsap.fromTo(el,
+        { scaleY: 0, opacity: 0, transformOrigin: "top center" },
+        { scaleY: 1, opacity: 1, duration: 0.25, ease: "back.out(1.4)" }
+      );
+    }
+  }, [chainDropdownOpen]);
+
+  // GSAP: animate chain selection change
+  useEffect(() => {
+    if (!destChain || destChain === prevDestChainRef.current) {
+      prevDestChainRef.current = destChain;
+      return;
+    }
+    prevDestChainRef.current = destChain;
+    const trigger = chainDropdownRef.current?.querySelector("button");
+    if (trigger) {
+      gsap.fromTo(trigger,
+        { scale: 0.95, borderColor: "rgba(59,130,246,0.7)" },
+        { scale: 1, borderColor: "rgba(255,255,255,0.06)", duration: 0.4, ease: "power2.out" }
+      );
+    }
+  }, [destChain]);
 
   // Modal entrance animations
   useEffect(() => {
@@ -947,7 +1021,7 @@ export default function BorrowDetailPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-6 border-b border-[var(--border)]">
+      <div className="flex gap-6 border-b border-white/[0.06]">
         {(["overview", "position"] as const).map((tab) => (
           <button
             key={tab}
@@ -969,26 +1043,11 @@ export default function BorrowDetailPage() {
         <div ref={leftRef} className="space-y-6">
           {activeTab === "overview" ? (
             <>
-              {/* Total Deposits card */}
-              <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-6">
-                <div className="text-xs text-[var(--text-tertiary)] mb-1">
-                  Total Deposits {borrowSymbol ? `(${borrowSymbol})` : ""}
-                </div>
-                {isLoading ? (
-                  <Skeleton className="h-9 w-48" />
-                ) : (
-                  <div className="text-3xl font-bold text-[var(--text-primary)]">
-                    {totalSupplyAssets !== undefined ? fmt(totalSupplyAssets, borrowDecimals) : "0.00"}
-                    <span className="text-lg font-normal text-[var(--text-tertiary)] ml-2">{borrowSymbol}</span>
-                  </div>
-                )}
-              </div>
-
               {/* Pool stats grid */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {isLoading ? (
-                  Array.from({ length: 5 }).map((_, i) => (
-                    <div key={i} className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4 space-y-2">
+                  Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-4 space-y-2">
                       <Skeleton className="h-3 w-20" />
                       <Skeleton className="h-5 w-24" />
                     </div>
@@ -1003,14 +1062,162 @@ export default function BorrowDetailPage() {
                 )}
               </div>
 
+              {/* Total Collateral chart */}
+              <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-6">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-[var(--text-tertiary)]">
+                    Total Collateral {collateralSymbol ? `(${collateralSymbol})` : ""}
+                  </span>
+                  <TimePeriodSelect value={collateralPeriod} onChange={setCollateralPeriod} />
+                </div>
+                {isLoading ? (
+                  <Skeleton className="h-9 w-48 mb-4" />
+                ) : (
+                  <div className="text-3xl font-bold text-[var(--text-primary)] mb-4">
+                    {collateralChartData.length > 0
+                      ? collateralChartData[collateralChartData.length - 1].totalCollateral.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                      : "0.00"}
+                    <span className="text-lg font-normal text-[var(--text-tertiary)] ml-2">{collateralSymbol}</span>
+                  </div>
+                )}
+                {snapshotsLoading ? (
+                  <Skeleton className="h-[220px] w-full rounded-lg" />
+                ) : collateralChartData.length > 0 ? (
+                  <PoolAreaChart
+                    data={collateralChartData}
+                    dataKey="totalCollateral"
+                    gradientId="collateralGradient"
+                    formatValue={(v) =>
+                      v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    }
+                    yAxisFormatter={(v) =>
+                      v >= 1e6
+                        ? `${(v / 1e6).toFixed(1)}M`
+                        : v >= 1e3
+                        ? `${(v / 1e3).toFixed(0)}K`
+                        : `${v}`
+                    }
+                  />
+                ) : (
+                  <div className="h-[220px] flex items-center justify-center text-sm text-[var(--text-tertiary)]">
+                    No historical data available
+                  </div>
+                )}
+              </div>
+
+              {/* Total Borrows chart */}
+              <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-6">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-[var(--text-tertiary)]">
+                    Total Borrow Assets {borrowSymbol ? `(${borrowSymbol})` : ""}
+                  </span>
+                  <TimePeriodSelect value={borrowsPeriod} onChange={setBorrowsPeriod} />
+                </div>
+                {isLoading ? (
+                  <Skeleton className="h-9 w-48 mb-4" />
+                ) : (
+                  <div className="text-3xl font-bold text-[var(--text-primary)] mb-4">
+                    {totalBorrowAssets !== undefined ? fmt(totalBorrowAssets, borrowDecimals) : "0.00"}
+                    <span className="text-lg font-normal text-[var(--text-tertiary)] ml-2">{borrowSymbol}</span>
+                  </div>
+                )}
+                {snapshotsLoading ? (
+                  <Skeleton className="h-[220px] w-full rounded-lg" />
+                ) : borrowsChartData.length > 0 ? (
+                  <PoolAreaChart
+                    data={borrowsChartData}
+                    dataKey="totalBorrows"
+                    gradientId="borrowsGradient"
+                    formatValue={(v) =>
+                      v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+                    }
+                    yAxisFormatter={(v) =>
+                      v >= 1e6
+                        ? `${(v / 1e6).toFixed(1)}M`
+                        : v >= 1e3
+                        ? `${(v / 1e3).toFixed(0)}K`
+                        : `${v}`
+                    }
+                  />
+                ) : (
+                  <div className="h-[220px] flex items-center justify-center text-sm text-[var(--text-tertiary)]">
+                    No historical data available
+                  </div>
+                )}
+              </div>
+
+              {/* Rate chart */}
+              <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-6">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs text-[var(--text-tertiary)]">Rate</span>
+                  <TimePeriodSelect value={ratePeriod} onChange={setRatePeriod} />
+                </div>
+                <div className="text-3xl font-bold text-[var(--accent)] mb-4">
+                  {borrowApy.toFixed(2)}<span className="text-xl">%</span>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-[1fr_180px] gap-4">
+                  <div>
+                    {snapshotsLoading ? (
+                      <Skeleton className="h-[220px] w-full rounded-lg" />
+                    ) : rateChartData.length > 0 ? (
+                      <PoolAreaChart
+                        data={rateChartData}
+                        dataKey="borrowRate"
+                        gradientId="rateGradient"
+                        formatValue={(v) => `${v.toFixed(2)}%`}
+                        yAxisFormatter={(v) => `${v.toFixed(1)}%`}
+                      />
+                    ) : (
+                      <div className="h-[220px] flex items-center justify-center text-sm text-[var(--text-tertiary)]">
+                        No historical data available
+                      </div>
+                    )}
+                  </div>
+                  <div className="space-y-3 md:border-l md:border-white/[0.06] md:pl-4">
+                    <div className="flex items-center justify-between md:block">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <div className="w-3 h-3 rounded-sm bg-[var(--accent)]" />
+                        <span className="text-xs text-[var(--text-tertiary)]">Rate</span>
+                      </div>
+                      <span className="text-sm font-medium text-[var(--text-primary)]">{borrowApy.toFixed(2)}%</span>
+                    </div>
+                    <div className="flex items-center justify-between md:block">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <div className="w-3 h-3 rounded-sm bg-[var(--text-tertiary)]" />
+                        <span className="text-xs text-[var(--text-tertiary)]">Utilization</span>
+                      </div>
+                      <span className="text-sm font-medium text-[var(--text-primary)]">{utilization.toFixed(2)}%</span>
+                    </div>
+                    <div className="border-t border-white/[0.06] pt-3 flex items-center justify-between md:block">
+                      <div className="flex items-center gap-2 mb-0.5">
+                        <div className="w-3 h-3 rounded-sm bg-[var(--text-tertiary)]" />
+                        <span className="text-xs text-[var(--text-tertiary)]">Reserve Factor</span>
+                      </div>
+                      <span className="text-sm font-medium text-[var(--text-primary)]">
+                        {reserveFactor ? `${(Number(reserveFactor) / 1e18 * 100).toFixed(1)}%` : "10%"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Interest Rate Model chart */}
+              {irmAddress && routerAddress && (
+                <InterestRateModelChart
+                  irmAddress={irmAddress}
+                  routerAddress={routerAddress as `0x${string}`}
+                  currentUtilization={utilization}
+                />
+              )}
+
               {/* Pool details */}
-              <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-6 space-y-4">
+              <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-6 space-y-4">
                 <h3 className="text-sm font-semibold text-[var(--text-primary)]">Pool Details</h3>
 
                 {isLoading ? (
                   <div className="space-y-4">
                     {Array.from({ length: 4 }).map((_, i) => (
-                      <div key={i} className="flex items-center justify-between py-2 border-b border-[var(--border)] last:border-b-0">
+                      <div key={i} className="flex items-center justify-between py-2 border-b border-white/[0.06] last:border-b-0">
                         <Skeleton className="h-3 w-28" />
                         <Skeleton className="h-4 w-32" />
                       </div>
@@ -1047,7 +1254,7 @@ export default function BorrowDetailPage() {
             </>
           ) : (
             /* Position tab */
-            <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-6">
+            <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-6">
               {!isConnected ? (
                 <div className="text-center py-12 text-sm text-[var(--text-tertiary)]">
                   Connect your wallet to view your position.
@@ -1055,7 +1262,7 @@ export default function BorrowDetailPage() {
               ) : isLoading ? (
                 <div className="space-y-4">
                   <Skeleton className="h-5 w-32" />
-                  <div className="bg-[var(--bg-secondary)] rounded-xl p-4 space-y-2">
+                  <div className="bg-white/[0.04] rounded-xl p-4 space-y-2">
                     <Skeleton className="h-3 w-20" />
                     <Skeleton className="h-6 w-24" />
                   </div>
@@ -1065,7 +1272,7 @@ export default function BorrowDetailPage() {
                   <h3 className="text-sm font-semibold text-[var(--text-primary)]">Your Position</h3>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    <div className="bg-[var(--bg-secondary)] rounded-xl p-4">
+                    <div className="bg-white/[0.04] rounded-xl p-4">
                       <div className="text-xs text-[var(--text-tertiary)] mb-2">Collateral</div>
                       <div className="flex flex-col gap-2">
                         {allCollaterals && allCollaterals.length > 0 ? (
@@ -1086,7 +1293,7 @@ export default function BorrowDetailPage() {
                       </div>
                     </div>
 
-                    <div className="bg-[var(--bg-secondary)] rounded-xl p-4">
+                    <div className="bg-white/[0.04] rounded-xl p-4">
                       <div className="text-xs text-[var(--text-tertiary)] mb-2">Loan</div>
                       <div className="flex items-center gap-2">
                         <TokenIcon symbol={borrowSymbol} color={TOKEN_COLORS[borrowSymbol] ?? "#888"} size={20} />
@@ -1099,7 +1306,7 @@ export default function BorrowDetailPage() {
 
                   {/* Health Factor */}
                   {hasPosition && userBorrowAmount > 0n && (
-                    <div className="bg-[var(--bg-secondary)] rounded-xl p-4">
+                    <div className="bg-white/[0.04] rounded-xl p-4">
                       <div className="text-xs text-[var(--text-tertiary)] mb-1">Health Factor</div>
                       <div className="flex items-center gap-2">
                         <div className={`text-lg font-semibold ${
@@ -1135,7 +1342,7 @@ export default function BorrowDetailPage() {
                   )}
 
                   {hasPosition && (
-                    <div className="bg-[var(--bg-secondary)] rounded-xl p-4">
+                    <div className="bg-white/[0.04] rounded-xl p-4">
                       <div className="text-xs text-[var(--text-tertiary)] mb-1">Position Address</div>
                       <span className="text-sm font-mono text-[var(--text-secondary)]">
                         {shortenAddr(userPositionAddr as string)}
@@ -1150,16 +1357,16 @@ export default function BorrowDetailPage() {
 
         {/* ──── Right side: Supply Collateral / Borrow sidebar ──── */}
         <div ref={rightRef} className="lg:sticky lg:top-6">
-          <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-5">
+          <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-5">
             {/* Sidebar tab selector */}
-            <div className="flex mb-5 bg-[var(--bg-secondary)] rounded-lg p-1">
+            <div className="flex mb-5 bg-white/[0.04] rounded-lg p-1">
               {(["collateral", "borrow", "repay"] as const).map((tab) => (
                 <button
                   key={tab}
                   onClick={() => { setSidebarTab(tab); resetTx(); resetWcTx(); }}
                   className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer ${
                     sidebarTab === tab
-                      ? "bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm"
+                      ? "bg-white/[0.08] text-[var(--text-primary)] shadow-sm"
                       : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
                   }`}
                 >
@@ -1184,7 +1391,7 @@ export default function BorrowDetailPage() {
                 </div>
 
                 {/* Amount input */}
-                <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-3">
+                <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-3">
                   <input
                     type="text"
                     inputMode="decimal"
@@ -1215,7 +1422,7 @@ export default function BorrowDetailPage() {
                 </div>
 
                 {/* Info rows */}
-                <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4 space-y-2.5">
+                <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4 space-y-2.5">
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-[var(--text-secondary)]">LTV</span>
                     <span className="text-[var(--text-primary)]">{ltv.toFixed(0)}%</span>
@@ -1295,13 +1502,13 @@ export default function BorrowDetailPage() {
 
                   {/* Chain dropdown */}
                   {isCrossChain && (
-                    <div className="mt-2 space-y-1.5 animate-in fade-in slide-in-from-top-1 duration-200">
+                    <div ref={crossChainContentRef} className="mt-2 space-y-1.5">
                       <div ref={chainDropdownRef} className="relative z-50">
                         {/* Custom dropdown trigger */}
                         <button
                           onClick={() => setChainDropdownOpen(!chainDropdownOpen)}
                           disabled={txStep !== "idle"}
-                          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-[var(--bg-secondary)] border border-[var(--border)] text-xs font-medium text-[var(--text-primary)] transition-all cursor-pointer hover:border-blue-500/40 focus:border-blue-500/50 outline-none"
+                          className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-[rgba(8,12,28,0.5)] border border-white/[0.06] text-xs font-medium text-[var(--text-primary)] transition-all cursor-pointer hover:border-blue-500/40 focus:border-blue-500/50 outline-none"
                         >
                           {destChain ? (
                             <Image
@@ -1326,19 +1533,24 @@ export default function BorrowDetailPage() {
                         {/* Dropdown options */}
                         {chainDropdownOpen && (
                           <div
-                            className="absolute z-50 top-[calc(100%+4px)] left-0 w-full bg-[var(--bg-card)] border border-[var(--border)] rounded-lg shadow-xl overflow-hidden origin-top"
+                            ref={dropdownMenuRef}
+                            className="absolute z-50 top-[calc(100%+4px)] left-0 w-full bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-lg shadow-xl overflow-hidden origin-top"
                           >
                             {DEST_CHAINS.map((chain) => (
                               <button
-                                key={chain.eid}
+                                key={chain.name}
                                 onClick={() => {
+                                  if (chain.soon) return;
                                   setDestChain(chain);
                                   setChainDropdownOpen(false);
                                 }}
-                                className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-medium transition-colors cursor-pointer ${
-                                  destChain?.eid === chain.eid
-                                    ? "bg-blue-500/10 text-blue-400"
-                                    : "text-[var(--text-primary)] hover:bg-[var(--bg-secondary)]"
+                                disabled={chain.soon}
+                                className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-medium transition-colors ${
+                                  chain.soon
+                                    ? "opacity-50 cursor-not-allowed"
+                                    : destChain?.eid === chain.eid
+                                    ? "bg-blue-500/10 text-blue-400 cursor-pointer"
+                                    : "text-[var(--text-primary)] hover:bg-white/[0.05] cursor-pointer"
                                 }`}
                               >
                                 <Image
@@ -1349,7 +1561,10 @@ export default function BorrowDetailPage() {
                                   className="rounded-full shrink-0"
                                 />
                                 <span className="flex-1 text-left">{chain.name}</span>
-                                {destChain?.eid === chain.eid && (
+                                {chain.soon && (
+                                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-500/15 text-blue-400">Soon</span>
+                                )}
+                                {!chain.soon && destChain?.eid === chain.eid && (
                                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
                                     <path d="M3.5 7l2.5 2.5 4.5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                                   </svg>
@@ -1369,7 +1584,7 @@ export default function BorrowDetailPage() {
                 </div>
 
                 {/* Amount input */}
-                <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-3">
+                <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-3">
                   <input
                     type="text"
                     inputMode="decimal"
@@ -1391,7 +1606,7 @@ export default function BorrowDetailPage() {
                 </div>
 
                 {/* Info rows */}
-                <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4 space-y-2.5">
+                <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4 space-y-2.5">
                   <div className="flex items-center justify-between text-sm">
                     <span className="text-[var(--text-secondary)]">Borrow APY</span>
                     <span className="text-[var(--accent)]">{borrowApy.toFixed(2)}%</span>
@@ -1511,10 +1726,8 @@ export default function BorrowDetailPage() {
                 {/* Success state */}
                 {(rlTxStep === "success" || wcTxStep === "success") ? (
                   <div className="text-center py-6">
-                    <div className="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-3">
-                      <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                        <path d="M7 14l5 5 9-9" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
+                    <div className="mb-3 mx-auto w-fit">
+                      <AnimatedCheckmark />
                     </div>
                     <p className="text-[var(--text-primary)] font-medium mb-1">
                       {rlTxStep === "success" ? "Repay Successful!" : "Withdraw Successful!"}
@@ -1532,7 +1745,7 @@ export default function BorrowDetailPage() {
                 ) : (
                   <>
                     {/* ── Repay Loan input card ── */}
-                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4">
+                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4">
                       <div className="flex items-center justify-between mb-3">
                         <span className="text-sm font-semibold text-[var(--text-primary)]">
                           Repay Loan {borrowSymbol}
@@ -1573,7 +1786,7 @@ export default function BorrowDetailPage() {
                                 setRepayLoanAmount(formatUnits(max, borrowDecimals));
                               }}
                               disabled={rlTxStep !== "idle"}
-                              className="px-2 py-0.5 rounded border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--text-tertiary)] transition-colors cursor-pointer font-semibold"
+                              className="px-2 py-0.5 rounded border border-white/[0.06] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--text-tertiary)] transition-colors cursor-pointer font-semibold"
                             >
                               MAX
                             </button>
@@ -1583,7 +1796,7 @@ export default function BorrowDetailPage() {
                     </div>
 
                     {/* ── Withdraw Collateral input card ── */}
-                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4">
+                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4">
                       <div className="flex items-center justify-between mb-3">
                         <span className="text-sm font-semibold text-[var(--text-primary)]">
                           Withdraw Collateral {collateralSymbol}
@@ -1621,7 +1834,7 @@ export default function BorrowDetailPage() {
                             <button
                               onClick={() => setWithdrawColAmount(formatUnits(positionCollateralBalance, collateralDecimals))}
                               disabled={wcTxStep !== "idle"}
-                              className="px-2 py-0.5 rounded border border-[var(--border)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--text-tertiary)] transition-colors cursor-pointer font-semibold"
+                              className="px-2 py-0.5 rounded border border-white/[0.06] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--text-tertiary)] transition-colors cursor-pointer font-semibold"
                             >
                               MAX
                             </button>
@@ -1631,7 +1844,7 @@ export default function BorrowDetailPage() {
                     </div>
 
                     {/* ── Combined info card ── */}
-                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4 space-y-3">
+                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4 space-y-3">
                       <div className="flex items-center justify-between text-sm">
                         <div className="flex items-center gap-2">
                           <TokenIcon symbol={collateralSymbol} color={getTokenColor(collateralSymbol)} size={20} />
@@ -1715,7 +1928,7 @@ export default function BorrowDetailPage() {
       </div>
 
       {/* ── Confirm Supply Collateral Modal ── */}
-      {showConfirmModal && (() => {
+      {showConfirmModal && createPortal((() => {
         const isReview = txStep === "idle" || txStep === "error";
         const isConfirming = txStep === "approving" || txStep === "supplying-collateral";
         const isDone = txStep === "success";
@@ -1735,7 +1948,7 @@ export default function BorrowDetailPage() {
               onClick={() => { if (isReview || isDone) { resetTx(); setShowConfirmModal(false); if (isDone) setCollateralAmount(""); } }}
             />
             {/* Card */}
-            <div ref={colModalCardRef} className="relative z-10 w-full max-w-[420px] mx-4 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
+            <div ref={colModalCardRef} className="relative z-10 w-full max-w-[420px] mx-4 bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden">
               {/* Header */}
               <div className="flex items-center justify-between px-6 pt-6 pb-4">
                 <h3 className="text-lg font-bold text-[var(--text-primary)]">
@@ -1756,7 +1969,7 @@ export default function BorrowDetailPage() {
               <div ref={colModalContentRef} className="px-6 pb-6 space-y-4">
                 {/* Pool info card — shown on Review & Confirm */}
                 {!isDone && (
-                  <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4">
+                  <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4">
                     {/* Token pair + LTV badge + link */}
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-2">
@@ -1796,7 +2009,7 @@ export default function BorrowDetailPage() {
                 {/* ── Review phase: Info rows + Confirm button ── */}
                 {isReview && (
                   <>
-                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 space-y-3">
+                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 space-y-3">
                       {/* Collateral change */}
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-[var(--text-tertiary)]">Collateral ({collateralSymbol})</span>
@@ -1900,10 +2113,8 @@ export default function BorrowDetailPage() {
                   <div className="space-y-4">
                     {/* Success icon */}
                     <div className="flex flex-col items-center py-4">
-                      <div className="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center mb-3">
-                        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                          <path d="M7 14l5 5 9-9" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
+                      <div className="mb-3">
+                        <AnimatedCheckmark />
                       </div>
                       <p className="text-sm text-[var(--text-secondary)]">
                         Collateral supplied successfully
@@ -1940,10 +2151,10 @@ export default function BorrowDetailPage() {
             </div>
           </div>
         );
-      })()}
+      })(), document.body)}
 
       {/* ── Confirm Borrow Modal ── */}
-      {showBorrowModal && (() => {
+      {showBorrowModal && createPortal((() => {
         const isReview = txStep === "idle" || txStep === "error";
         const isConfirming = txStep === "borrowing" || txStep === "borrowing-crosschain";
         const isDone = txStep === "success";
@@ -1962,7 +2173,7 @@ export default function BorrowDetailPage() {
               className="absolute inset-0 bg-black/60 backdrop-blur-sm"
               onClick={() => { if (isReview || isDone) { resetTx(); setShowBorrowModal(false); if (isDone) setBorrowAmount(""); } }}
             />
-            <div ref={borModalCardRef} className="relative z-10 w-full max-w-[420px] mx-4 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
+            <div ref={borModalCardRef} className="relative z-10 w-full max-w-[420px] mx-4 bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl shadow-2xl overflow-hidden">
               {/* Header */}
               <div className="flex items-center justify-between px-6 pt-6 pb-4">
                 <h3 className="text-lg font-bold text-[var(--text-primary)]">
@@ -1983,7 +2194,7 @@ export default function BorrowDetailPage() {
               <div ref={borModalContentRef} className="px-6 pb-6 space-y-4">
                 {/* Pool info card — Review & Confirm */}
                 {!isDone && (
-                  <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4">
+                  <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4">
                     <div className="flex items-center justify-between mb-4">
                       <div className="flex items-center gap-2">
                         <div className="relative w-10 h-6">
@@ -2028,7 +2239,7 @@ export default function BorrowDetailPage() {
                 {/* ── Review phase ── */}
                 {isReview && (
                   <>
-                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 space-y-3">
+                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 space-y-3">
                       {/* Loan change */}
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-[var(--text-tertiary)]">Loan ({borrowSymbol})</span>
@@ -2149,10 +2360,8 @@ export default function BorrowDetailPage() {
                 {isDone && (
                   <div className="space-y-4">
                     <div className="flex flex-col items-center py-4">
-                      <div className="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center mb-3">
-                        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                          <path d="M7 14l5 5 9-9" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
+                      <div className="mb-3">
+                        <AnimatedCheckmark />
                       </div>
                       <p className="text-sm text-[var(--text-secondary)]">
                         {isCrossChain
@@ -2191,7 +2400,7 @@ export default function BorrowDetailPage() {
             </div>
           </div>
         );
-      })()}
+      })(), document.body)}
     </div>
   );
 }
@@ -2206,7 +2415,7 @@ function StatCard({
   accent?: boolean;
 }) {
   return (
-    <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-4">
+    <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-4">
       <div className="text-xs text-[var(--text-tertiary)] mb-1">{label}</div>
       <span className={`text-sm font-semibold ${accent ? "text-[var(--accent)]" : "text-[var(--text-primary)]"}`}>
         {value}
@@ -2217,7 +2426,7 @@ function StatCard({
 
 function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between py-2 border-b border-[var(--border)] last:border-b-0">
+    <div className="flex items-center justify-between py-2 border-b border-white/[0.06] last:border-b-0">
       <span className="text-xs text-[var(--text-tertiary)]">{label}</span>
       {children}
     </div>
