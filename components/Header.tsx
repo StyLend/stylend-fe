@@ -16,6 +16,7 @@ const pageTitles: Record<string, string> = {
 function getTitle(pathname: string): string {
   if (pageTitles[pathname]) return pageTitles[pathname];
   if (pathname.startsWith("/earn/")) return "Pool Details";
+  if (pathname.startsWith("/borrow/")) return "Pool Details";
   return "Dashboard";
 }
 

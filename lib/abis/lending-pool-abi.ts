@@ -81,7 +81,7 @@ export const lendingPoolAbi = [
   },
   {
     type: "function",
-    name: "withdrawLiquidity",
+    name: "d",
     inputs: [{ name: "shares", type: "uint256" }],
     outputs: [],
     stateMutability: "payable",

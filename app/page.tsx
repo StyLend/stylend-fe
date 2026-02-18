@@ -6,7 +6,7 @@ import Image from "next/image";
 import { useAccount, usePublicClient } from "wagmi";
 import { formatUnits } from "viem";
 import { baseSepolia } from "wagmi/chains";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import TokenIcon from "@/components/TokenIcon";
 import { lendingPoolRouterAbi } from "@/lib/abis/lending-pool-router-abi";
 import { lendingPoolFactoryAbi } from "@/lib/abis/lending-pool-factory-abi";
@@ -269,8 +269,10 @@ function useUserPositions(
       };
     },
     enabled: !!client && !!userAddress && loadedPools.length > 0,
-    staleTime: 15_000,
-    refetchInterval: 30_000,
+    staleTime: 0,
+    refetchInterval: 5_000,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
   });
 }
 
@@ -338,8 +340,10 @@ function useCrossChainLoans(
       return items;
     },
     enabled: !!baseClient && !!userAddress && loans.length > 0,
-    staleTime: 15_000,
-    refetchInterval: 30_000,
+    staleTime: 0,
+    refetchInterval: 5_000,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
   });
 }
 
@@ -530,6 +534,7 @@ function CrossChainLoanRow({ item }: { item: CrossChainLoanItem }) {
 
 export default function Home() {
   const { address, isConnected } = useAccount();
+  const queryClient = useQueryClient();
   const [borrowTab, setBorrowTab] = useState<BorrowTab>("loans");
   const earnSectionRef = useRef<HTMLDivElement>(null);
   const borrowSectionRef = useRef<HTMLDivElement>(null);
@@ -538,6 +543,13 @@ export default function Home() {
   const loansTabRef = useRef<HTMLButtonElement>(null);
   const collateralTabRef = useRef<HTMLButtonElement>(null);
   const isFirstTab = useRef(true);
+
+  // Force refetch all dashboard data on mount (after navigating from action pages)
+  useEffect(() => {
+    queryClient.refetchQueries({ queryKey: ["poolData"] });
+    queryClient.refetchQueries({ queryKey: ["userPositions"] });
+    queryClient.refetchQueries({ queryKey: ["crossChainLoans"] });
+  }, [queryClient]);
 
   // Fetch all pool data
   const pool0 = usePoolData(LENDING_POOL_ADDRESSES[0]);

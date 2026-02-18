@@ -156,7 +156,9 @@ export function usePoolData(poolAddress: `0x${string}`) {
       };
     },
     enabled: !!client,
-    staleTime: 30_000,
-    refetchInterval: 60_000,
+    staleTime: 0,
+    refetchInterval: 5_000,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
   });
 }

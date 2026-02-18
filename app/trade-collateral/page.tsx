@@ -11,6 +11,7 @@ import {
 } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { parseUnits, formatUnits, type Address } from "viem";
+import { useQueryClient } from "@tanstack/react-query";
 import TokenIcon from "@/components/TokenIcon";
 import { lendingPoolAbi } from "@/lib/abis/lending-pool-abi";
 import { lendingPoolRouterAbi } from "@/lib/abis/lending-pool-router-abi";
@@ -55,6 +56,7 @@ function formatNum(num: number, maxDec: number = 4): string {
 export default function TradeCollateralPage() {
   const cardRef = useRef<HTMLDivElement>(null);
   const { address: userAddress, isConnected } = useAccount();
+  const queryClient = useQueryClient();
 
   // ── UI state ──
   const [tokenIn, setTokenIn] = useState<TokenInfo>(TOKENS[0]);
@@ -261,8 +263,10 @@ export default function TradeCollateralPage() {
       setAmountIn("");
       refetchPositionBalances();
       refetchRouterData();
+      queryClient.invalidateQueries({ queryKey: ["poolData"] });
+      queryClient.invalidateQueries({ queryKey: ["userPositions"] });
     }
-  }, [swapConfirmed, txStep, refetchPositionBalances, refetchRouterData]);
+  }, [swapConfirmed, txStep, refetchPositionBalances, refetchRouterData, queryClient]);
 
   const handleSwap = useCallback(() => {
     if (!swapPool || !amountIn || Number(amountIn) <= 0) return;

@@ -10,8 +10,11 @@ import {
   useReadContracts,
   useWriteContract,
   useWaitForTransactionReceipt,
+  usePublicClient,
 } from "wagmi";
 import { parseUnits, formatUnits, maxUint256, encodePacked } from "viem";
+import { baseSepolia } from "wagmi/chains";
+import { useQueryClient, useQuery } from "@tanstack/react-query";
 import TokenIcon from "@/components/TokenIcon";
 import { lendingPoolAbi } from "@/lib/abis/lending-pool-abi";
 import { lendingPoolRouterAbi } from "@/lib/abis/lending-pool-router-abi";
@@ -21,7 +24,7 @@ import { mockErc20Abi } from "@/lib/abis/mock-erc20-abi";
 import { tokenDataStreamAbi } from "@/lib/abis/token-data-stream-abi";
 import { multicallAbi } from "@/lib/abis/multicall-abi";
 import { oftAdapterAbi } from "@/lib/abis/oft-adapter-abi";
-import { CHAIN, MULTICALL_ADDRESS } from "@/lib/contracts";
+import { CHAIN, MULTICALL_ADDRESS, BASE_SEPOLIA_TOKENS } from "@/lib/contracts";
 import { gsap } from "@/hooks/useGsap";
 
 // LayerZero V3 extraOptions: executor lzReceive with 200k gas
@@ -45,6 +48,21 @@ const TOKEN_COLORS: Record<string, string> = {
   ETH: "#627eea", WETH: "#627eea", WBTC: "#f7931a", USDC: "#2775ca",
   USDT: "#26a17b", DAI: "#f5ac37", ARB: "#28a0f0", LINK: "#2a5ada",
 };
+
+// All known collateral tokens on Arbitrum Sepolia (for multi-token position reading)
+const KNOWN_COLLATERAL_TOKENS = [
+  { symbol: "WETH", address: "0x48b3f901d040796f9cda37469fc5436fca711366" as `0x${string}`, decimals: 18 },
+  { symbol: "USDC", address: "0x5602a3f9b8a935df32871bb1c6289f24620233f7" as `0x${string}`, decimals: 6 },
+  { symbol: "USDT", address: "0x21483bcde6e19fdb5acc1375c443ebb17147a69a" as `0x${string}`, decimals: 6 },
+  { symbol: "WBTC", address: "0xacbc1ce1908b9434222e60d6cfed9e011a386220" as `0x${string}`, decimals: 8 },
+];
+
+interface PositionCollateral {
+  symbol: string;
+  decimals: number;
+  amount: bigint;
+  usd: number;
+}
 
 function getTokenColor(symbol: string): string {
   return TOKEN_COLORS[symbol.toUpperCase()] ?? "#6366f1";
@@ -72,8 +90,9 @@ export default function BorrowDetailPage() {
   const lendingPoolAddr = poolAddress as `0x${string}`;
 
   const { address: userAddress, isConnected } = useAccount();
+  const queryClient = useQueryClient();
   const [activeTab, setActiveTab] = useState<"overview" | "position">("overview");
-  const [sidebarTab, setSidebarTab] = useState<"collateral" | "borrow">("collateral");
+  const [sidebarTab, setSidebarTab] = useState<"collateral" | "borrow" | "repay">("collateral");
   const [collateralAmount, setCollateralAmount] = useState("");
   const [borrowAmount, setBorrowAmount] = useState("");
   const [crossChainEnabled, setCrossChainEnabled] = useState(false);
@@ -85,11 +104,15 @@ export default function BorrowDetailPage() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showBorrowModal, setShowBorrowModal] = useState(false);
   const [needsApproval, setNeedsApproval] = useState(false);
+  const [withdrawColAmount, setWithdrawColAmount] = useState("");
+  const [wcTxStep, setWcTxStep] = useState<"idle" | "withdrawing" | "success" | "error">("idle");
+  const [wcErrorMsg, setWcErrorMsg] = useState("");
 
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
   const collateralFormRef = useRef<HTMLDivElement>(null);
   const borrowFormRef = useRef<HTMLDivElement>(null);
+  const repayFormRef = useRef<HTMLDivElement>(null);
   const chainDropdownRef = useRef<HTMLDivElement>(null);
 
   // ── Contract reads ──
@@ -111,7 +134,7 @@ export default function BorrowDetailPage() {
       { address: routerAddress as `0x${string}`, abi: lendingPoolRouterAbi, functionName: "ltv", chainId: CHAIN.id },
       { address: routerAddress as `0x${string}`, abi: lendingPoolRouterAbi, functionName: "factory", chainId: CHAIN.id },
     ],
-    query: { enabled: !!routerAddress },
+    query: { enabled: !!routerAddress, refetchInterval: 5_000 },
   });
 
   const borrowTokenAddr = routerData?.[0]?.result as `0x${string}` | undefined;
@@ -207,13 +230,13 @@ export default function BorrowDetailPage() {
     query: { enabled: !!routerAddress && !!userAddress },
   });
 
-  const { data: userBorrowShares } = useReadContract({
+  const { data: userBorrowShares, refetch: refetchBorrowShares } = useReadContract({
     address: routerAddress as `0x${string}`,
     abi: lendingPoolRouterAbi,
     functionName: "userBorrowShares",
     args: [userAddress!],
     chainId: CHAIN.id,
-    query: { enabled: !!routerAddress && !!userAddress },
+    query: { enabled: !!routerAddress && !!userAddress, refetchInterval: 5_000 },
   });
 
   const hasPosition = userPositionAddr && userPositionAddr !== "0x0000000000000000000000000000000000000000";
@@ -225,7 +248,7 @@ export default function BorrowDetailPage() {
     functionName: "balanceOf",
     args: [userPositionAddr!],
     chainId: CHAIN.id,
-    query: { enabled: !!collateralTokenAddr && !!hasPosition },
+    query: { enabled: !!collateralTokenAddr && !!hasPosition, refetchInterval: 5_000 },
   });
 
   // User wallet balances
@@ -234,11 +257,67 @@ export default function BorrowDetailPage() {
       { address: collateralTokenAddr, abi: mockErc20Abi, functionName: "balanceOf", args: [userAddress!], chainId: CHAIN.id },
       { address: collateralTokenAddr, abi: mockErc20Abi, functionName: "allowance", args: [userAddress!, lendingPoolAddr], chainId: CHAIN.id },
     ],
-    query: { enabled: !!collateralTokenAddr && !!userAddress },
+    query: { enabled: !!collateralTokenAddr && !!userAddress, refetchInterval: 5_000 },
   });
 
   const walletCollateralBalance = (userData?.[0]?.result as bigint) ?? 0n;
   const collateralAllowance = (userData?.[1]?.result as bigint) ?? 0n;
+
+  // ── All collateral token balances on position contract ──
+  const arbClient = usePublicClient({ chainId: CHAIN.id });
+
+  const { data: allCollaterals, refetch: refetchAllCollaterals } = useQuery<PositionCollateral[]>({
+    queryKey: ["positionCollaterals", lendingPoolAddr, userPositionAddr],
+    queryFn: async () => {
+      if (!arbClient || !userPositionAddr || !tokenDataStreamAddr) return [];
+      const items: PositionCollateral[] = [];
+      for (const token of KNOWN_COLLATERAL_TOKENS) {
+        const balance = (await arbClient.readContract({
+          address: token.address,
+          abi: mockErc20Abi,
+          functionName: "balanceOf",
+          args: [userPositionAddr],
+        })) as bigint;
+        if (balance > 0n) {
+          let usd = 0;
+          try {
+            const [priceRound, priceDec] = await Promise.all([
+              arbClient.readContract({ address: tokenDataStreamAddr, abi: tokenDataStreamAbi, functionName: "latestRoundData", args: [token.address] }),
+              arbClient.readContract({ address: tokenDataStreamAddr, abi: tokenDataStreamAbi, functionName: "decimals", args: [token.address] }),
+            ]) as [readonly [bigint, bigint, bigint, bigint, bigint], bigint];
+            usd = Number(formatUnits(balance, token.decimals)) * Number(formatUnits(priceRound[1], Number(priceDec)));
+          } catch { /* price unavailable */ }
+          items.push({ symbol: token.symbol, decimals: token.decimals, amount: balance, usd });
+        }
+      }
+      return items;
+    },
+    enabled: !!arbClient && !!hasPosition && !!tokenDataStreamAddr,
+    staleTime: 0,
+    refetchInterval: 5_000,
+  });
+
+  // ── Cross-chain loan balance (Base Sepolia) ──
+  const baseClient = usePublicClient({ chainId: baseSepolia.id });
+  const baseToken = BASE_SEPOLIA_TOKENS.find((t) => t.symbol === borrowSymbol);
+
+  const { data: crossChainLoanBalance } = useQuery<bigint>({
+    queryKey: ["crossChainLoan", lendingPoolAddr, userAddress, borrowSymbol],
+    queryFn: async () => {
+      if (!baseClient || !userAddress || !baseToken) return 0n;
+      return (await baseClient.readContract({
+        address: baseToken.address,
+        abi: mockErc20Abi,
+        functionName: "balanceOf",
+        args: [userAddress],
+      })) as bigint;
+    },
+    enabled: !!baseClient && !!userAddress && !!baseToken,
+    staleTime: 0,
+    refetchInterval: 5_000,
+  });
+
+  const crossChainLoanAmount = crossChainLoanBalance ?? 0n;
 
   // ── Cross-chain borrow reads ──
 
@@ -369,10 +448,13 @@ export default function BorrowDetailPage() {
   const { writeContract: writeBorrow, data: borrowTxHash, reset: resetBorrow } = useWriteContract();
   const { writeContract: writeCrossChain, data: crossChainTxHash, reset: resetCrossChain } = useWriteContract();
 
+  const { writeContract: writeWithdrawCol, data: withdrawColTxHash, reset: resetWithdrawCol } = useWriteContract();
+
   const { isSuccess: approveConfirmed } = useWaitForTransactionReceipt({ hash: approveTxHash });
   const { isSuccess: collateralConfirmed } = useWaitForTransactionReceipt({ hash: collateralTxHash });
   const { isSuccess: borrowConfirmed } = useWaitForTransactionReceipt({ hash: borrowTxHash });
   const { isSuccess: crossChainConfirmed, isLoading: crossChainConfirming } = useWaitForTransactionReceipt({ hash: crossChainTxHash });
+  const { isSuccess: withdrawColConfirmed } = useWaitForTransactionReceipt({ hash: withdrawColTxHash });
 
   // Supply collateral tx
   const doSupplyCollateralTx = useCallback(() => {
@@ -408,8 +490,13 @@ export default function BorrowDetailPage() {
       refetchRouter();
       refetchUser();
       refetchCollateral();
+      refetchBorrowShares();
+      refetchAllCollaterals();
+      queryClient.invalidateQueries({ queryKey: ["poolData"] });
+      queryClient.invalidateQueries({ queryKey: ["userPositions"] });
+      queryClient.invalidateQueries({ queryKey: ["crossChainLoans"] });
     }
-  }, [collateralConfirmed, txStep, refetchRouter, refetchUser, refetchCollateral]);
+  }, [collateralConfirmed, txStep, refetchRouter, refetchUser, refetchCollateral, refetchBorrowShares, refetchAllCollaterals, queryClient]);
 
   // After borrow confirmed
   useEffect(() => {
@@ -419,8 +506,13 @@ export default function BorrowDetailPage() {
       refetchRouter();
       refetchUser();
       refetchCollateral();
+      refetchBorrowShares();
+      refetchAllCollaterals();
+      queryClient.invalidateQueries({ queryKey: ["poolData"] });
+      queryClient.invalidateQueries({ queryKey: ["userPositions"] });
+      queryClient.invalidateQueries({ queryKey: ["crossChainLoans"] });
     }
-  }, [borrowConfirmed, txStep, refetchRouter, refetchUser, refetchCollateral]);
+  }, [borrowConfirmed, txStep, refetchRouter, refetchUser, refetchCollateral, refetchBorrowShares, refetchAllCollaterals, queryClient]);
 
   // After cross-chain borrow confirmed
   useEffect(() => {
@@ -430,8 +522,14 @@ export default function BorrowDetailPage() {
       refetchRouter();
       refetchUser();
       refetchCollateral();
+      refetchBorrowShares();
+      refetchAllCollaterals();
+      queryClient.invalidateQueries({ queryKey: ["poolData"] });
+      queryClient.invalidateQueries({ queryKey: ["userPositions"] });
+      queryClient.invalidateQueries({ queryKey: ["crossChainLoans"] });
+      queryClient.invalidateQueries({ queryKey: ["crossChainLoan"] });
     }
-  }, [crossChainConfirmed, txStep, refetchRouter, refetchUser, refetchCollateral]);
+  }, [crossChainConfirmed, txStep, refetchRouter, refetchUser, refetchCollateral, refetchBorrowShares, refetchAllCollaterals, queryClient]);
 
   const handleSupplyCollateral = () => {
     if (!userAddress || !collateralTokenAddr || !collateralAmount) return;
@@ -562,6 +660,54 @@ export default function BorrowDetailPage() {
     resetCrossChain();
   };
 
+  // ── Withdraw Collateral ──
+  useEffect(() => {
+    if (withdrawColConfirmed && wcTxStep === "withdrawing") {
+      setWcTxStep("success");
+      setWithdrawColAmount("");
+      refetchRouter();
+      refetchUser();
+      refetchCollateral();
+      refetchBorrowShares();
+      refetchAllCollaterals();
+      queryClient.invalidateQueries({ queryKey: ["poolData"] });
+      queryClient.invalidateQueries({ queryKey: ["userPositions"] });
+    }
+  }, [withdrawColConfirmed, wcTxStep, refetchRouter, refetchUser, refetchCollateral, refetchBorrowShares, refetchAllCollaterals, queryClient]);
+
+  const handleWithdrawCollateral = () => {
+    if (!userAddress || !collateralTokenAddr || !withdrawColAmount) return;
+    setWcErrorMsg("");
+    const amount = parseUnits(withdrawColAmount, collateralDecimals);
+    if (amount <= 0n) return;
+    if (positionCollateralBalance && amount > positionCollateralBalance) {
+      setWcErrorMsg("Exceeds collateral balance");
+      return;
+    }
+    setWcTxStep("withdrawing");
+    writeWithdrawCol(
+      {
+        address: lendingPoolAddr,
+        abi: lendingPoolAbi,
+        functionName: "withdrawCollateral",
+        args: [amount],
+        chainId: CHAIN.id,
+      },
+      {
+        onError: (err) => {
+          setWcTxStep("error");
+          setWcErrorMsg(err.message.split("\n")[0]);
+        },
+      }
+    );
+  };
+
+  const resetWcTx = () => {
+    setWcTxStep("idle");
+    setWcErrorMsg("");
+    resetWithdrawCol();
+  };
+
   // GSAP
   useLayoutEffect(() => {
     const tl = gsap.timeline({ delay: 0.2 });
@@ -582,6 +728,8 @@ export default function BorrowDetailPage() {
   useEffect(() => {
     const target = sidebarTab === "borrow"
       ? borrowFormRef.current
+      : sidebarTab === "repay"
+      ? repayFormRef.current
       : collateralFormRef.current;
     if (!target) return;
     const items = target.children;
@@ -772,21 +920,52 @@ export default function BorrowDetailPage() {
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div className="bg-[var(--bg-secondary)] rounded-xl p-4">
-                      <div className="text-xs text-[var(--text-tertiary)] mb-1">Collateral Deposited</div>
-                      <div className="text-lg font-semibold text-[var(--text-primary)]">
-                        {hasPosition && positionCollateralBalance !== undefined
-                          ? fmt(positionCollateralBalance as bigint, collateralDecimals)
-                          : "0.00"}
+                      <div className="text-xs text-[var(--text-tertiary)] mb-2">Collateral</div>
+                      <div className="flex flex-col gap-2">
+                        {allCollaterals && allCollaterals.length > 0 ? (
+                          allCollaterals.map((c) => (
+                            <div key={c.symbol} className="flex items-center gap-2">
+                              <div className="relative w-5 h-5 flex-shrink-0">
+                                <TokenIcon symbol={c.symbol} size={20} />
+                                <Image src="/chains/arbitrum-logo.png" alt="Arbitrum" width={10} height={10} className="absolute -bottom-0.5 -right-0.5 rounded-full ring-1 ring-[var(--bg-secondary)]" />
+                              </div>
+                              <span className="text-sm font-semibold text-[var(--text-primary)]">
+                                {fmt(c.amount, c.decimals)} {c.symbol}
+                              </span>
+                            </div>
+                          ))
+                        ) : (
+                          <span className="text-sm text-[var(--text-tertiary)]">0.00</span>
+                        )}
                       </div>
-                      <div className="text-xs text-[var(--text-tertiary)]">{collateralSymbol}</div>
                     </div>
 
                     <div className="bg-[var(--bg-secondary)] rounded-xl p-4">
-                      <div className="text-xs text-[var(--text-tertiary)] mb-1">Borrow Amount</div>
-                      <div className="text-lg font-semibold text-[var(--text-primary)]">
-                        {fmt(userBorrowAmount, borrowDecimals)}
+                      <div className="text-xs text-[var(--text-tertiary)] mb-2">Loan</div>
+                      <div className="flex flex-col gap-2">
+                        {/* Arbitrum loan */}
+                        <div className="flex items-center gap-2">
+                          <div className="relative w-5 h-5 flex-shrink-0">
+                            <TokenIcon symbol={borrowSymbol} size={20} />
+                            <Image src="/chains/arbitrum-logo.png" alt="Arbitrum" width={10} height={10} className="absolute -bottom-0.5 -right-0.5 rounded-full ring-1 ring-[var(--bg-secondary)]" />
+                          </div>
+                          <span className="text-sm font-semibold text-[var(--text-primary)]">
+                            {fmt(userBorrowAmount, borrowDecimals)} {borrowSymbol}
+                          </span>
+                        </div>
+                        {/* Base Sepolia loan */}
+                        {crossChainLoanAmount > 0n && (
+                          <div className="flex items-center gap-2">
+                            <div className="relative w-5 h-5 flex-shrink-0">
+                              <TokenIcon symbol={borrowSymbol} size={20} />
+                              <Image src="/chains/base-logo.png" alt="Base" width={10} height={10} className="absolute -bottom-0.5 -right-0.5 rounded-full ring-1 ring-[var(--bg-secondary)]" />
+                            </div>
+                            <span className="text-sm font-semibold text-[var(--text-primary)]">
+                              {fmt(crossChainLoanAmount, baseToken?.decimals ?? borrowDecimals)} {borrowSymbol}
+                            </span>
+                          </div>
+                        )}
                       </div>
-                      <div className="text-xs text-[var(--text-tertiary)]">{borrowSymbol}</div>
                     </div>
                   </div>
 
@@ -846,22 +1025,23 @@ export default function BorrowDetailPage() {
           <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl p-5">
             {/* Sidebar tab selector */}
             <div className="flex mb-5 bg-[var(--bg-secondary)] rounded-lg p-1">
-              {(["collateral", "borrow"] as const).map((tab) => (
+              {(["collateral", "borrow", "repay"] as const).map((tab) => (
                 <button
                   key={tab}
-                  onClick={() => { setSidebarTab(tab); resetTx(); }}
+                  onClick={() => { setSidebarTab(tab); resetTx(); resetWcTx(); }}
                   className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer ${
                     sidebarTab === tab
                       ? "bg-[var(--bg-card)] text-[var(--text-primary)] shadow-sm"
                       : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
                   }`}
                 >
-                  {tab === "collateral" ? "Supply Collateral" : "Borrow"}
+                  {tab === "collateral" ? "Supply Collateral" : tab === "borrow" ? "Borrow" : "Repay"}
                 </button>
               ))}
             </div>
 
             {sidebarTab === "collateral" ? (
+              /* ── Supply Collateral tab ── */
               <div ref={collateralFormRef}>
                 {/* Supply Collateral form */}
                 <div className="flex items-center justify-between mb-3">
@@ -952,7 +1132,8 @@ export default function BorrowDetailPage() {
                     : "Supply Collateral"}
                 </button>
               </div>
-            ) : (
+            ) : sidebarTab === "borrow" ? (
+              /* ── Borrow tab ── */
               <div ref={borrowFormRef}>
                 {/* Borrow form */}
                 <div className="flex items-center justify-between mb-3">
@@ -1195,6 +1376,131 @@ export default function BorrowDetailPage() {
                     ? `Borrow to ${destChain.name}`
                     : "Borrow"}
                 </button>
+              </div>
+            ) : (
+              /* ── Repay tab (Withdraw Collateral) ── */
+              <div ref={repayFormRef}>
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-sm font-semibold text-[var(--text-primary)]">
+                    Withdraw Collateral
+                  </span>
+                  {collateralSymbol ? (
+                    <TokenIcon symbol={collateralSymbol} color={getTokenColor(collateralSymbol)} size={24} />
+                  ) : (
+                    <div className="w-6 h-6 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
+                  )}
+                </div>
+
+                {wcTxStep === "success" ? (
+                  <div className="text-center py-6">
+                    <div className="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-3">
+                      <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                        <path d="M7 14l5 5 9-9" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                    <p className="text-[var(--text-primary)] font-medium mb-1">Withdraw Successful!</p>
+                    <p className="text-xs text-[var(--text-tertiary)] mb-4">Collateral has been returned to your wallet.</p>
+                    <button
+                      onClick={resetWcTx}
+                      className="w-full py-2.5 rounded-lg bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] text-sm font-semibold transition-colors cursor-pointer"
+                    >
+                      Done
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    {/* Amount input */}
+                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-3">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        value={withdrawColAmount}
+                        onChange={(e) => {
+                          if (/^\d*\.?\d*$/.test(e.target.value)) setWithdrawColAmount(e.target.value);
+                        }}
+                        disabled={wcTxStep !== "idle"}
+                        className="w-full bg-transparent outline-none text-2xl font-semibold text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] mb-2"
+                      />
+                      <div className="flex items-center justify-between text-xs text-[var(--text-tertiary)]">
+                        <div className="flex items-center gap-1.5">
+                          {collateralSymbol && <TokenIcon symbol={collateralSymbol} color={getTokenColor(collateralSymbol)} size={16} />}
+                          <span>
+                            {isConnected && !isLoading && positionCollateralBalance !== undefined
+                              ? `${fmt(positionCollateralBalance as bigint, collateralDecimals)} ${collateralSymbol}`
+                              : "—"}
+                          </span>
+                        </div>
+                        {isConnected && !isLoading && positionCollateralBalance && positionCollateralBalance > 0n && (
+                          <button
+                            onClick={() => setWithdrawColAmount(formatUnits(positionCollateralBalance, collateralDecimals))}
+                            disabled={wcTxStep !== "idle"}
+                            className="text-[var(--accent)] font-semibold hover:underline cursor-pointer"
+                          >
+                            MAX
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Info rows */}
+                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 mb-4 space-y-2.5">
+                      <div className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2">
+                          {collateralSymbol ? (
+                            <TokenIcon symbol={collateralSymbol} color={getTokenColor(collateralSymbol)} size={18} />
+                          ) : (
+                            <div className="w-[18px] h-[18px] rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
+                          )}
+                          <span className="text-[var(--text-secondary)]">Withdraw ({collateralSymbol || "..."})</span>
+                        </div>
+                        <span className="text-[var(--text-primary)] font-medium">
+                          {withdrawColAmount || "0.00"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-secondary)]">LTV</span>
+                        <span className="text-[var(--text-primary)]">{ltv.toFixed(0)}%</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-secondary)]">Health Factor</span>
+                        <span className={`font-medium ${
+                          healthFactor >= 1.5 ? "text-green-400" : healthFactor >= 1.1 ? "text-yellow-400" : "text-red-400"
+                        }`}>
+                          {healthFactor === Infinity ? "∞" : healthFactor.toFixed(2)}
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Error */}
+                    {wcErrorMsg && (
+                      <div className="mb-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                        {wcErrorMsg}
+                      </div>
+                    )}
+
+                    {/* Action button */}
+                    <button
+                      onClick={handleWithdrawCollateral}
+                      disabled={
+                        wcTxStep !== "idle" ||
+                        !isConnected ||
+                        isLoading ||
+                        !withdrawColAmount ||
+                        Number(withdrawColAmount) <= 0
+                      }
+                      className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                    >
+                      {!isConnected
+                        ? "Connect Wallet"
+                        : wcTxStep === "withdrawing"
+                        ? "Withdrawing..."
+                        : isLoading
+                        ? "Loading..."
+                        : "Withdraw Collateral"}
+                    </button>
+                  </>
+                )}
               </div>
             )}
           </div>
