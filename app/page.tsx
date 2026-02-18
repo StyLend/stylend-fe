@@ -351,40 +351,57 @@ function useCrossChainLoans(
 
 type BorrowTab = "loans" | "collateral";
 
-function EarnPositionRow({ pos }: { pos: PoolPosition }) {
-  const { pool, depositAmount, depositUsd } = pos;
-
+function EarnPositionsTable({ deposits }: { deposits: PoolPosition[] }) {
   return (
-    <Link
-      href={`/earn/${pool.poolAddress}`}
-      className="block bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl p-5 hover:bg-[var(--bg-card-hover)] transition-colors"
-    >
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <TokenIcon
-            symbol={pool.borrowSymbol}
-            color={getTokenColor(pool.borrowSymbol)}
-            size={36}
-          />
-          <div>
-            <div className="font-semibold text-[var(--text-primary)]">
-              {pool.borrowSymbol}
-            </div>
-            <div className="text-xs text-[var(--text-tertiary)]">
-              {pool.collateralSymbol}/{pool.borrowSymbol} Pool
-            </div>
-          </div>
-        </div>
-        <div className="text-right">
-          <div className="text-lg font-bold text-[var(--text-primary)]">
-            {fmt(depositAmount, pool.borrowDecimals)} {pool.borrowSymbol}
-          </div>
-          <div className="text-xs text-[var(--text-tertiary)]">
-            {formatUsd(depositUsd)}
-          </div>
-        </div>
+    <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl overflow-hidden">
+      {/* Header */}
+      <div className="grid grid-cols-3 px-5 py-3 border-b border-[var(--border)] text-xs text-[var(--text-tertiary)] font-medium">
+        <span>Asset</span>
+        <span className="text-center">APY</span>
+        <span className="text-right">Pool</span>
       </div>
-    </Link>
+      {/* Rows */}
+      {deposits.map((pos) => (
+        <Link
+          key={pos.pool.poolAddress}
+          href={`/earn/${pos.pool.poolAddress}`}
+          className="grid grid-cols-3 items-center px-5 py-4 hover:bg-[var(--bg-card-hover)] transition-colors border-b border-[var(--border)] last:border-b-0"
+        >
+          {/* Asset: logo + balance */}
+          <div className="flex items-center gap-3">
+            <TokenIcon symbol={pos.pool.borrowSymbol} color={getTokenColor(pos.pool.borrowSymbol)} size={32} />
+            <div>
+              <div className="text-sm font-semibold text-[var(--text-primary)]">
+                {fmt(pos.depositAmount, pos.pool.borrowDecimals)} {pos.pool.borrowSymbol}
+              </div>
+              <div className="text-xs text-[var(--text-tertiary)]">
+                {formatUsd(pos.depositUsd)}
+              </div>
+            </div>
+          </div>
+          {/* APY */}
+          <div className="text-center">
+            <span className="text-sm font-semibold text-[var(--accent)]">
+              {pos.pool.supplyApy.toFixed(2)}%
+            </span>
+          </div>
+          {/* Pool: pair logos */}
+          <div className="flex items-center justify-end gap-2">
+            <div className="relative w-12 h-7">
+              <div className="absolute left-0 z-10">
+                <TokenIcon symbol={pos.pool.collateralSymbol} color={getTokenColor(pos.pool.collateralSymbol)} size={28} />
+              </div>
+              <div className="absolute left-4">
+                <TokenIcon symbol={pos.pool.borrowSymbol} color={getTokenColor(pos.pool.borrowSymbol)} size={28} />
+              </div>
+            </div>
+            <span className="text-xs text-[var(--text-secondary)] font-medium">
+              {pos.pool.collateralSymbol}/{pos.pool.borrowSymbol}
+            </span>
+          </div>
+        </Link>
+      ))}
+    </div>
   );
 }
 
@@ -718,11 +735,7 @@ export default function Home() {
 
         {/* Pool positions or empty state */}
         {isConnected && hasDeposits ? (
-          <div className="space-y-3">
-            {userPositions!.deposits.map((pos) => (
-              <EarnPositionRow key={pos.pool.poolAddress} pos={pos} />
-            ))}
-          </div>
+          <EarnPositionsTable deposits={userPositions!.deposits} />
         ) : (
           <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl py-12 text-center">
             <p className="text-sm text-[var(--text-tertiary)] mb-4">

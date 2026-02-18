@@ -851,7 +851,6 @@ export default function BorrowDetailPage() {
                     <StatCard label="Total Borrowed" value={totalBorrowAssets !== undefined ? `${fmt(totalBorrowAssets, borrowDecimals)} ${borrowSymbol}` : "—"} />
                     <StatCard label="Available Liquidity" value={liquidity !== undefined ? `${fmt(liquidity, borrowDecimals)} ${borrowSymbol}` : "—"} />
                     <StatCard label="Borrow APY" value={`${borrowApy.toFixed(2)}%`} accent />
-                    <StatCard label="Supply APY" value={`${supplyApy.toFixed(2)}%`} accent />
                     <StatCard label="LTV" value={`${ltv.toFixed(0)}%`} accent />
                   </>
                 )}
