@@ -32,9 +32,9 @@ function EarnPoolRow({ poolAddress }: { poolAddress: `0x${string}` }) {
   return (
     <Link
       href={`/earn/${poolAddress}`}
-      className="grid md:grid-cols-[2.2fr_1.4fr_1.4fr_0.8fr] items-center px-6 py-5 border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--bg-card-hover)] transition-colors cursor-pointer"
+      className="grid md:grid-cols-[2fr_1fr_1.2fr_1.2fr_0.8fr] items-center px-6 py-5 border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--bg-card-hover)] transition-colors cursor-pointer"
     >
-      {/* Pool — deposit asset only */}
+      {/* Asset — supply token */}
       <div className="flex items-center gap-3">
         {isLoading || !pool ? (
           <>
@@ -52,6 +52,24 @@ function EarnPoolRow({ poolAddress }: { poolAddress: `0x${string}` }) {
               <div className="text-xs text-[var(--text-tertiary)]">{pool.borrowName}</div>
             </div>
           </>
+        )}
+      </div>
+
+      {/* Collateral — exposure */}
+      <div>
+        {isLoading || !pool ? (
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
+            <div className="h-4 w-12 rounded bg-[var(--bg-tertiary)] animate-pulse" />
+          </div>
+        ) : (
+          <div className="flex items-center gap-2">
+            <TokenIcon symbol={pool.collateralSymbol} color={getTokenColor(pool.collateralSymbol)} size={24} />
+            <span className="text-sm font-medium text-[var(--text-primary)]">{pool.collateralSymbol}</span>
+            <span className="text-[10px] font-medium text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] px-1.5 py-0.5 rounded-full">
+              {pool.ltv.toFixed(0)}%
+            </span>
+          </div>
         )}
       </div>
 
@@ -107,8 +125,9 @@ export default function EarnPage() {
     <div className="space-y-6">
       <div ref={cardRef} className="bg-[var(--bg-card)] border border-[var(--border)] rounded-xl overflow-hidden">
         {/* Table header */}
-        <div className="hidden md:grid grid-cols-[2.2fr_1.4fr_1.4fr_0.8fr] px-6 py-3 border-b border-[var(--border)]">
+        <div className="hidden md:grid grid-cols-[2fr_1fr_1.2fr_1.2fr_0.8fr] px-6 py-3 border-b border-[var(--border)]">
           <div className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Asset</div>
+          <div className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Collateral</div>
           <div className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider text-right">Total Deposits</div>
           <div className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider text-right">Liquidity</div>
           <div className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider text-right">APY</div>

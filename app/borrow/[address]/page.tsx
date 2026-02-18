@@ -82,6 +82,9 @@ export default function BorrowDetailPage() {
   const [txStep, setTxStep] = useState<"idle" | "approving" | "supplying-collateral" | "borrowing" | "borrowing-crosschain" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [chainDropdownOpen, setChainDropdownOpen] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [showBorrowModal, setShowBorrowModal] = useState(false);
+  const [needsApproval, setNeedsApproval] = useState(false);
 
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
@@ -402,7 +405,6 @@ export default function BorrowDetailPage() {
   useEffect(() => {
     if (collateralConfirmed && txStep === "supplying-collateral") {
       setTxStep("success");
-      setCollateralAmount("");
       refetchRouter();
       refetchUser();
       refetchCollateral();
@@ -441,6 +443,7 @@ export default function BorrowDetailPage() {
       return;
     }
     if (collateralAllowance < amount) {
+      setNeedsApproval(true);
       setTxStep("approving");
       writeApprove(
         {
@@ -550,6 +553,9 @@ export default function BorrowDetailPage() {
   const resetTx = () => {
     setTxStep("idle");
     setErrorMsg("");
+    setShowConfirmModal(false);
+    setShowBorrowModal(false);
+    setNeedsApproval(false);
     resetApprove();
     resetCollateral();
     resetBorrow();
@@ -855,35 +861,7 @@ export default function BorrowDetailPage() {
               ))}
             </div>
 
-            {txStep === "success" ? (
-              <div className="text-center py-6">
-                <div className="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-3">
-                  <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-                    <path d="M7 14l5 5 9-9" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                </div>
-                <p className="text-[var(--text-primary)] font-medium mb-1">
-                  {sidebarTab === "collateral"
-                    ? "Collateral Supplied!"
-                    : isCrossChain
-                    ? "Cross-Chain Borrow Submitted!"
-                    : "Borrow Successful!"}
-                </p>
-                <p className="text-xs text-[var(--text-tertiary)] mb-4">
-                  {sidebarTab === "collateral"
-                    ? "Your collateral has been added to the position."
-                    : isCrossChain
-                    ? `Tokens will arrive on ${destChain?.name ?? "destination chain"} via LayerZero.`
-                    : "Tokens have been sent to your wallet."}
-                </p>
-                <button
-                  onClick={resetTx}
-                  className="w-full py-2.5 rounded-lg bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] text-sm font-semibold transition-colors cursor-pointer"
-                >
-                  Done
-                </button>
-              </div>
-            ) : sidebarTab === "collateral" ? (
+            {sidebarTab === "collateral" ? (
               <div ref={collateralFormRef}>
                 {/* Supply Collateral form */}
                 <div className="flex items-center justify-between mb-3">
@@ -945,7 +923,17 @@ export default function BorrowDetailPage() {
 
                 {/* Action button */}
                 <button
-                  onClick={handleSupplyCollateral}
+                  onClick={() => {
+                    if (!userAddress || !collateralTokenAddr || !collateralAmount) return;
+                    const amount = parseUnits(collateralAmount, collateralDecimals);
+                    if (amount <= 0n) return;
+                    if (amount > walletCollateralBalance) {
+                      setErrorMsg("Insufficient balance");
+                      return;
+                    }
+                    setErrorMsg("");
+                    setShowConfirmModal(true);
+                  }}
                   disabled={
                     txStep !== "idle" ||
                     !isConnected ||
@@ -957,10 +945,6 @@ export default function BorrowDetailPage() {
                 >
                   {!isConnected
                     ? "Connect Wallet"
-                    : txStep === "approving"
-                    ? "Approving..."
-                    : txStep === "supplying-collateral"
-                    ? "Supplying Collateral..."
                     : isLoading
                     ? "Loading..."
                     : !collateralAmount || Number(collateralAmount) <= 0
@@ -1163,9 +1147,28 @@ export default function BorrowDetailPage() {
                   </div>
                 )}
 
-                {/* Action button */}
+                {/* Action button — opens review modal */}
                 <button
-                  onClick={isCrossChain && destChain ? handleCrossChainBorrow : handleBorrow}
+                  onClick={() => {
+                    if (!userAddress || !borrowAmount) return;
+                    const amount = parseUnits(borrowAmount, borrowDecimals);
+                    if (amount <= 0n) return;
+                    if (liquidity !== undefined && amount > liquidity) {
+                      setErrorMsg("Exceeds available liquidity");
+                      return;
+                    }
+                    if (amount > maxBorrowable + userBorrowAmount) {
+                      setErrorMsg("Exceeds maximum borrowable amount based on your collateral and LTV");
+                      return;
+                    }
+                    if (!hasPosition || !positionCollateralBalance || positionCollateralBalance === 0n) {
+                      setErrorMsg("Supply collateral first before borrowing");
+                      return;
+                    }
+                    if (isCrossChain && (!destChain || !oftConfigured)) return;
+                    setErrorMsg("");
+                    setShowBorrowModal(true);
+                  }}
                   disabled={
                     txStep !== "idle" ||
                     !isConnected ||
@@ -1178,12 +1181,6 @@ export default function BorrowDetailPage() {
                 >
                   {!isConnected
                     ? "Connect Wallet"
-                    : txStep === "borrowing"
-                    ? "Borrowing..."
-                    : txStep === "borrowing-crosschain"
-                    ? crossChainConfirming
-                      ? "Confirming..."
-                      : `Sending to ${destChain?.name ?? "destination"}...`
                     : isLoading
                     ? "Loading..."
                     : isCrossChain && !destChain
@@ -1203,6 +1200,481 @@ export default function BorrowDetailPage() {
           </div>
         </div>
       </div>
+
+      {/* ── Confirm Supply Collateral Modal ── */}
+      {showConfirmModal && (() => {
+        const isReview = txStep === "idle" || txStep === "error";
+        const isConfirming = txStep === "approving" || txStep === "supplying-collateral";
+        const isDone = txStep === "success";
+        const currentCollateral = positionCollateralBalance ?? 0n;
+        const inputParsed = (() => { try { return parseUnits(collateralAmount || "0", collateralDecimals); } catch { return 0n; } })();
+        const newCollateral = currentCollateral + inputParsed;
+        const collateralUsd = collateralPrice > 0n
+          ? (Number(collateralAmount || 0) * Number(formatUnits(collateralPrice, collateralPriceDec))).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+          : "0.00";
+
+        return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center">
+            {/* Backdrop */}
+            <div
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              onClick={() => { if (isReview || isDone) { resetTx(); setShowConfirmModal(false); if (isDone) setCollateralAmount(""); } }}
+            />
+            {/* Card */}
+            <div className="relative z-10 w-full max-w-[420px] mx-4 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 pt-6 pb-4">
+                <h3 className="text-lg font-bold text-[var(--text-primary)]">
+                  {isDone ? "Transaction Successful" : isConfirming ? "Confirm" : "Review"}
+                </h3>
+                {(isReview || isDone) && (
+                  <button
+                    onClick={() => { resetTx(); setShowConfirmModal(false); if (isDone) setCollateralAmount(""); }}
+                    className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                      <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+
+              <div className="px-6 pb-6 space-y-4">
+                {/* Pool info card — shown on Review & Confirm */}
+                {!isDone && (
+                  <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4">
+                    {/* Token pair + LTV badge + link */}
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <div className="relative w-10 h-6">
+                          <div className="absolute left-0 z-10">
+                            <TokenIcon symbol={collateralSymbol} color={getTokenColor(collateralSymbol)} size={24} />
+                          </div>
+                          <div className="absolute left-4">
+                            <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={24} />
+                          </div>
+                        </div>
+                        <span className="text-sm font-semibold text-[var(--text-primary)] ml-2">
+                          {collateralSymbol} / {borrowSymbol}
+                        </span>
+                        <span className="text-[10px] font-medium text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] px-2 py-0.5 rounded-full">
+                          {ltv.toFixed(0)}%
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Supply Collateral amount */}
+                    <div className="text-xs text-[var(--text-tertiary)] mb-1.5">Supply Collateral</div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-lg font-bold text-[var(--text-primary)]">
+                          {collateralAmount}
+                        </span>
+                        <span className="text-xs text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] px-1.5 py-0.5 rounded">
+                          ${collateralUsd}
+                        </span>
+                      </div>
+                      <TokenIcon symbol={collateralSymbol} color={getTokenColor(collateralSymbol)} size={28} />
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Review phase: Info rows + Confirm button ── */}
+                {isReview && (
+                  <>
+                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 space-y-3">
+                      {/* Collateral change */}
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-tertiary)]">Collateral ({collateralSymbol})</span>
+                        <div className="flex items-center gap-1.5 text-[var(--text-primary)]">
+                          <span>{fmt(currentCollateral, collateralDecimals)}</span>
+                          <span className="text-[var(--text-tertiary)]">→</span>
+                          <span className="text-[var(--accent)] font-medium">{fmt(newCollateral, collateralDecimals)}</span>
+                        </div>
+                      </div>
+                      {/* Rate */}
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-tertiary)]">Rate</span>
+                        <span className="text-[var(--text-primary)]">{borrowApy.toFixed(2)}%</span>
+                      </div>
+                      {/* LTV */}
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-tertiary)]">LTV</span>
+                        <span className="text-[var(--text-primary)]">{ltv.toFixed(0)}%</span>
+                      </div>
+                    </div>
+
+                    {/* Error */}
+                    {errorMsg && (
+                      <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                        {errorMsg}
+                      </div>
+                    )}
+
+                    {/* Confirm button */}
+                    <button
+                      onClick={() => {
+                        if (txStep === "error") {
+                          setTxStep("idle");
+                          setErrorMsg("");
+                          resetApprove();
+                          resetCollateral();
+                        }
+                        handleSupplyCollateral();
+                      }}
+                      className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                    >
+                      {txStep === "error" ? "Retry" : "Confirm"}
+                    </button>
+                  </>
+                )}
+
+                {/* ── Confirm phase: Loading animation ── */}
+                {isConfirming && (
+                  <div className="space-y-4">
+                    {/* Tx hash if available */}
+                    {(approveTxHash || collateralTxHash) && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-[var(--text-tertiary)]">
+                          {txStep === "approving" ? "Approve" : "Supply Collateral"}
+                        </span>
+                        <a
+                          href={`${CHAIN.blockExplorers?.default.url}/tx/${collateralTxHash ?? approveTxHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline"
+                        >
+                          {((collateralTxHash ?? approveTxHash) as string).slice(0, 6)}...{((collateralTxHash ?? approveTxHash) as string).slice(-4)}
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                            <path d="M3 1h6v6M9 1L1 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </a>
+                      </div>
+                    )}
+
+                    {/* Animated progress bar */}
+                    <div className="w-full h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-[var(--accent)] rounded-full animate-pulse"
+                        style={{
+                          width: txStep === "supplying-collateral" ? "70%" : "35%",
+                          transition: "width 1.5s ease-in-out",
+                        }}
+                      />
+                    </div>
+
+                    {/* Proceed in wallet message */}
+                    <div className="flex items-center justify-center gap-2 py-2">
+                      {/* Spinner */}
+                      <svg className="animate-spin h-4 w-4 text-[var(--accent)]" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      <span className="text-sm text-[var(--text-secondary)]">
+                        {needsApproval
+                          ? txStep === "approving"
+                            ? "Signature 1/2 — Proceed in your wallet"
+                            : "Signature 2/2 — Proceed in your wallet"
+                          : "Signature 1/1 — Proceed in your wallet"}
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Done phase ── */}
+                {isDone && (
+                  <div className="space-y-4">
+                    {/* Success icon */}
+                    <div className="flex flex-col items-center py-4">
+                      <div className="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center mb-3">
+                        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                          <path d="M7 14l5 5 9-9" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </div>
+                      <p className="text-sm text-[var(--text-secondary)]">
+                        Collateral supplied successfully
+                      </p>
+                    </div>
+
+                    {/* Explorer link */}
+                    {collateralTxHash && (
+                      <div className="flex items-center justify-center">
+                        <a
+                          href={`${CHAIN.blockExplorers?.default.url}/tx/${collateralTxHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline"
+                        >
+                          View on explorer
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                            <path d="M3 1h6v6M9 1L1 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </a>
+                      </div>
+                    )}
+
+                    {/* Done button */}
+                    <button
+                      onClick={() => { resetTx(); setShowConfirmModal(false); setCollateralAmount(""); }}
+                      className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                    >
+                      Done
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Confirm Borrow Modal ── */}
+      {showBorrowModal && (() => {
+        const isReview = txStep === "idle" || txStep === "error";
+        const isConfirming = txStep === "borrowing" || txStep === "borrowing-crosschain";
+        const isDone = txStep === "success";
+        const borrowUsd = borrowPrice > 0n
+          ? (Number(borrowAmount || 0) * Number(formatUnits(borrowPrice, borrowPriceDec))).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+          : "0.00";
+        const newBorrowTotal = userBorrowAmount + ((() => { try { return parseUnits(borrowAmount || "0", borrowDecimals); } catch { return 0n; } })());
+        const newBorrowValueUsd = borrowValueUsd + Number(borrowAmount || 0) * Number(formatUnits(borrowPrice, borrowPriceDec));
+        const newHf = newBorrowValueUsd > 0 ? collateralValueUsd / newBorrowValueUsd : Infinity;
+        const activeTxHash = isCrossChain ? crossChainTxHash : borrowTxHash;
+
+        return (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center">
+            <div
+              className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+              onClick={() => { if (isReview || isDone) { resetTx(); setShowBorrowModal(false); if (isDone) setBorrowAmount(""); } }}
+            />
+            <div className="relative z-10 w-full max-w-[420px] mx-4 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
+              {/* Header */}
+              <div className="flex items-center justify-between px-6 pt-6 pb-4">
+                <h3 className="text-lg font-bold text-[var(--text-primary)]">
+                  {isDone ? "Transaction Successful" : isConfirming ? "Confirm" : "Review"}
+                </h3>
+                {(isReview || isDone) && (
+                  <button
+                    onClick={() => { resetTx(); setShowBorrowModal(false); if (isDone) setBorrowAmount(""); }}
+                    className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                  >
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                      <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+
+              <div className="px-6 pb-6 space-y-4">
+                {/* Pool info card — Review & Confirm */}
+                {!isDone && (
+                  <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <div className="relative w-10 h-6">
+                          <div className="absolute left-0 z-10">
+                            <TokenIcon symbol={collateralSymbol} color={getTokenColor(collateralSymbol)} size={24} />
+                          </div>
+                          <div className="absolute left-4">
+                            <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={24} />
+                          </div>
+                        </div>
+                        <span className="text-sm font-semibold text-[var(--text-primary)] ml-2">
+                          {collateralSymbol} / {borrowSymbol}
+                        </span>
+                        <span className="text-[10px] font-medium text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] px-2 py-0.5 rounded-full">
+                          {ltv.toFixed(0)}%
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="text-xs text-[var(--text-tertiary)] mb-1.5">
+                      {isCrossChain && destChain ? `Borrow to ${destChain.name}` : "Borrow"}
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-lg font-bold text-[var(--text-primary)]">
+                          {borrowAmount}
+                        </span>
+                        <span className="text-xs text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] px-1.5 py-0.5 rounded">
+                          ${borrowUsd}
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        {isCrossChain && destChain && (
+                          <Image src={destChain.logo} alt={destChain.name} width={16} height={16} className="rounded-full" />
+                        )}
+                        <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={28} />
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Review phase ── */}
+                {isReview && (
+                  <>
+                    <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4 space-y-3">
+                      {/* Loan change */}
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-tertiary)]">Loan ({borrowSymbol})</span>
+                        <div className="flex items-center gap-1.5 text-[var(--text-primary)]">
+                          <span>{fmt(userBorrowAmount, borrowDecimals)}</span>
+                          <span className="text-[var(--text-tertiary)]">→</span>
+                          <span className="text-[var(--accent)] font-medium">{fmt(newBorrowTotal, borrowDecimals)}</span>
+                        </div>
+                      </div>
+                      {/* Rate */}
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-tertiary)]">Rate</span>
+                        <span className="text-[var(--text-primary)]">{borrowApy.toFixed(2)}%</span>
+                      </div>
+                      {/* Health Factor */}
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-tertiary)]">Health Factor</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[var(--text-primary)]">
+                            {healthFactor === Infinity ? "∞" : healthFactor.toFixed(2)}
+                          </span>
+                          <span className="text-[var(--text-tertiary)]">→</span>
+                          <span className={
+                            newHf >= 1.5 ? "text-green-400 font-medium"
+                              : newHf >= 1.1 ? "text-yellow-400 font-medium"
+                              : "text-red-400 font-medium"
+                          }>
+                            {newHf === Infinity ? "∞" : newHf.toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+                      {/* LTV */}
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-tertiary)]">LTV</span>
+                        <span className="text-[var(--text-primary)]">{ltv.toFixed(0)}%</span>
+                      </div>
+                      {/* Destination chain for cross-chain */}
+                      {isCrossChain && destChain && (
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-[var(--text-tertiary)]">Destination</span>
+                          <div className="flex items-center gap-1.5">
+                            <Image src={destChain.logo} alt={destChain.name} width={14} height={14} className="rounded-full" />
+                            <span className="text-[var(--text-primary)]">{destChain.name}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {errorMsg && (
+                      <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                        {errorMsg}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => {
+                        if (txStep === "error") {
+                          setTxStep("idle");
+                          setErrorMsg("");
+                          resetBorrow();
+                          resetCrossChain();
+                        }
+                        if (isCrossChain && destChain) {
+                          handleCrossChainBorrow();
+                        } else {
+                          handleBorrow();
+                        }
+                      }}
+                      className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                    >
+                      {txStep === "error" ? "Retry" : "Confirm"}
+                    </button>
+                  </>
+                )}
+
+                {/* ── Confirm phase: Loading ── */}
+                {isConfirming && (
+                  <div className="space-y-4">
+                    {activeTxHash && (
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-[var(--text-tertiary)]">
+                          {isCrossChain ? "Cross-Chain Borrow" : "Borrow"}
+                        </span>
+                        <a
+                          href={`${CHAIN.blockExplorers?.default.url}/tx/${activeTxHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline"
+                        >
+                          {(activeTxHash as string).slice(0, 6)}...{(activeTxHash as string).slice(-4)}
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                            <path d="M3 1h6v6M9 1L1 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </a>
+                      </div>
+                    )}
+
+                    <div className="w-full h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-[var(--accent)] rounded-full animate-pulse"
+                        style={{ width: "50%", transition: "width 1.5s ease-in-out" }}
+                      />
+                    </div>
+
+                    <div className="flex items-center justify-center gap-2 py-2">
+                      <svg className="animate-spin h-4 w-4 text-[var(--accent)]" viewBox="0 0 24 24" fill="none">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      <span className="text-sm text-[var(--text-secondary)]">
+                        Signature 1/1 — Proceed in your wallet
+                      </span>
+                    </div>
+                  </div>
+                )}
+
+                {/* ── Done phase ── */}
+                {isDone && (
+                  <div className="space-y-4">
+                    <div className="flex flex-col items-center py-4">
+                      <div className="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center mb-3">
+                        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                          <path d="M7 14l5 5 9-9" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </div>
+                      <p className="text-sm text-[var(--text-secondary)]">
+                        {isCrossChain
+                          ? `Tokens will arrive on ${destChain?.name ?? "destination"} via LayerZero`
+                          : "Borrow successful"}
+                      </p>
+                    </div>
+
+                    {activeTxHash && (
+                      <div className="flex items-center justify-center">
+                        <a
+                          href={`${CHAIN.blockExplorers?.default.url}/tx/${activeTxHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline"
+                        >
+                          View on explorer
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                            <path d="M3 1h6v6M9 1L1 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </a>
+                      </div>
+                    )}
+
+                    <button
+                      onClick={() => { resetTx(); setShowBorrowModal(false); setBorrowAmount(""); }}
+                      className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                    >
+                      Done
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

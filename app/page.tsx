@@ -1,15 +1,19 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useAccount, usePublicClient } from "wagmi";
 import { formatUnits } from "viem";
+import { baseSepolia } from "wagmi/chains";
 import { useQuery } from "@tanstack/react-query";
 import TokenIcon from "@/components/TokenIcon";
 import { lendingPoolRouterAbi } from "@/lib/abis/lending-pool-router-abi";
+import { lendingPoolFactoryAbi } from "@/lib/abis/lending-pool-factory-abi";
+import { tokenDataStreamAbi } from "@/lib/abis/token-data-stream-abi";
 import { mockErc20Abi } from "@/lib/abis/mock-erc20-abi";
 import { usePoolData, type PoolData } from "@/hooks/usePoolData";
-import { LENDING_POOL_ADDRESSES, CHAIN } from "@/lib/contracts";
+import { LENDING_POOL_ADDRESSES, CHAIN, BASE_SEPOLIA_TOKENS } from "@/lib/contracts";
 import { gsap } from "@/hooks/useGsap";
 
 const TOKEN_COLORS: Record<string, string> = {
@@ -22,9 +26,7 @@ function getTokenColor(symbol: string): string {
 }
 
 function formatUsd(value: number): string {
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(2)}M`;
-  if (value >= 1_000) return `$${(value / 1_000).toFixed(2)}K`;
-  return `$${value.toFixed(2)}`;
+  return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function fmt(value: bigint, decimals: number): string {
@@ -38,6 +40,13 @@ function fmt(value: bigint, decimals: number): string {
 
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000" as const;
 
+const KNOWN_TOKENS = [
+  { symbol: "WETH", address: "0x48b3f901d040796f9cda37469fc5436fca711366" as `0x${string}`, decimals: 18, color: "#627EEA" },
+  { symbol: "USDC", address: "0x5602a3f9b8a935df32871bb1c6289f24620233f7" as `0x${string}`, decimals: 6, color: "#2775CA" },
+  { symbol: "USDT", address: "0x21483bcde6e19fdb5acc1375c443ebb17147a69a" as `0x${string}`, decimals: 6, color: "#50AF95" },
+  { symbol: "WBTC", address: "0xacbc1ce1908b9434222e60d6cfed9e011a386220" as `0x${string}`, decimals: 8, color: "#F7931A" },
+];
+
 // ── User positions across all pools ──
 
 interface PoolPosition {
@@ -46,9 +55,16 @@ interface PoolPosition {
   depositUsd: number;
   borrowAmount: bigint;
   borrowUsd: number;
-  collateralAmount: bigint;
-  collateralUsd: number;
   hasPosition: boolean;
+}
+
+interface CollateralItem {
+  pool: PoolData;
+  tokenSymbol: string;
+  tokenDecimals: number;
+  tokenColor: string;
+  amount: bigint;
+  usd: number;
 }
 
 interface UserPositions {
@@ -57,7 +73,8 @@ interface UserPositions {
   totalCollateralUsd: number;
   deposits: PoolPosition[];
   loans: PoolPosition[];
-  collaterals: PoolPosition[];
+  collaterals: CollateralItem[];
+  positionAddresses: `0x${string}`[];
 }
 
 function useUserPositions(
@@ -82,7 +99,11 @@ function useUserPositions(
           deposits: [],
           loans: [],
           collaterals: [],
+          positionAddresses: [],
         };
+
+      const allCollaterals: CollateralItem[] = [];
+      const allPositionAddrs: `0x${string}`[] = [];
 
       const positions: PoolPosition[] = await Promise.all(
         loadedPools.map(async (pool) => {
@@ -122,13 +143,13 @@ function useUserPositions(
           })) as `0x${string}`;
 
           const hasPosition = positionAddr !== ZERO_ADDR;
+          if (hasPosition) allPositionAddrs.push(positionAddr);
 
-          // 4. Borrow shares
+          // 4. Borrow shares + collateral (all known tokens)
           let borrowAmount = 0n;
-          let collateralAmount = 0n;
 
           if (hasPosition) {
-            const [userBorrowShares, totalBorrowShares, colBal] =
+            const [userBorrowShares, totalBorrowShares] =
               (await Promise.all([
                 client.readContract({
                   address: pool.routerAddress,
@@ -141,20 +162,77 @@ function useUserPositions(
                   abi: lendingPoolRouterAbi,
                   functionName: "totalBorrowShares",
                 }),
-                client.readContract({
-                  address: pool.collateralTokenAddr,
-                  abi: mockErc20Abi,
-                  functionName: "balanceOf",
-                  args: [positionAddr],
-                }),
-              ])) as [bigint, bigint, bigint];
+              ])) as [bigint, bigint];
 
             borrowAmount =
               totalBorrowShares > 0n && pool.totalBorrow > 0n
                 ? (userBorrowShares * pool.totalBorrow) / totalBorrowShares
                 : 0n;
 
-            collateralAmount = colBal;
+            // Read all known token balances on position
+            const tokenBalances = (await Promise.all(
+              KNOWN_TOKENS.map((t) =>
+                client.readContract({
+                  address: t.address,
+                  abi: mockErc20Abi,
+                  functionName: "balanceOf",
+                  args: [positionAddr],
+                })
+              )
+            )) as bigint[];
+
+            // Get factory → tokenDataStream for price lookups
+            const factoryAddr = (await client.readContract({
+              address: pool.routerAddress,
+              abi: lendingPoolRouterAbi,
+              functionName: "factory",
+            })) as `0x${string}`;
+
+            const tokenDataStreamAddr = (await client.readContract({
+              address: factoryAddr,
+              abi: lendingPoolFactoryAbi,
+              functionName: "tokenDataStream",
+            })) as `0x${string}`;
+
+            // Build collateral items for non-zero balances
+            for (let i = 0; i < KNOWN_TOKENS.length; i++) {
+              if (tokenBalances[i] > 0n) {
+                const token = KNOWN_TOKENS[i];
+                let price = 0n;
+                let priceDecimals = 8;
+                try {
+                  const [priceRound, priceDec] = (await Promise.all([
+                    client.readContract({
+                      address: tokenDataStreamAddr,
+                      abi: tokenDataStreamAbi,
+                      functionName: "latestRoundData",
+                      args: [token.address],
+                    }),
+                    client.readContract({
+                      address: tokenDataStreamAddr,
+                      abi: tokenDataStreamAbi,
+                      functionName: "decimals",
+                      args: [token.address],
+                    }),
+                  ])) as [readonly [bigint, bigint, bigint, bigint, bigint], bigint];
+                  price = priceRound[1];
+                  priceDecimals = Number(priceDec);
+                } catch { /* token not in price feed */ }
+
+                const usd =
+                  Number(formatUnits(tokenBalances[i], token.decimals)) *
+                  Number(formatUnits(price, priceDecimals));
+
+                allCollaterals.push({
+                  pool,
+                  tokenSymbol: token.symbol,
+                  tokenDecimals: token.decimals,
+                  tokenColor: token.color,
+                  amount: tokenBalances[i],
+                  usd,
+                });
+              }
+            }
           }
 
           // 5. USD conversions
@@ -166,20 +244,12 @@ function useUserPositions(
             Number(formatUnits(borrowAmount, pool.borrowDecimals)) *
             Number(formatUnits(pool.borrowPrice, pool.borrowPriceDecimals));
 
-          const collateralUsd =
-            Number(formatUnits(collateralAmount, pool.collateralDecimals)) *
-            Number(
-              formatUnits(pool.collateralPrice, pool.collateralPriceDecimals)
-            );
-
           return {
             pool,
             depositAmount,
             depositUsd,
             borrowAmount,
             borrowUsd,
-            collateralAmount,
-            collateralUsd,
             hasPosition,
           };
         })
@@ -187,21 +257,87 @@ function useUserPositions(
 
       const deposits = positions.filter((p) => p.depositAmount > 0n);
       const loans = positions.filter((p) => p.borrowAmount > 0n);
-      const collaterals = positions.filter((p) => p.collateralAmount > 0n);
 
       return {
         totalDepositUsd: positions.reduce((s, p) => s + p.depositUsd, 0),
         totalBorrowUsd: positions.reduce((s, p) => s + p.borrowUsd, 0),
-        totalCollateralUsd: positions.reduce(
-          (s, p) => s + p.collateralUsd,
-          0
-        ),
+        totalCollateralUsd: allCollaterals.reduce((s, c) => s + c.usd, 0),
         deposits,
         loans,
-        collaterals,
+        collaterals: allCollaterals,
+        positionAddresses: allPositionAddrs,
       };
     },
     enabled: !!client && !!userAddress && loadedPools.length > 0,
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  });
+}
+
+// ── Cross-chain loan balances (Base Sepolia) ──
+
+// Map Arbitrum borrow token symbols to their Base Sepolia counterpart
+const BASE_SEPOLIA_TOKEN_MAP: Record<string, typeof BASE_SEPOLIA_TOKENS[number]> = {};
+for (const t of BASE_SEPOLIA_TOKENS) {
+  BASE_SEPOLIA_TOKEN_MAP[t.symbol] = t;
+}
+
+interface CrossChainLoanItem {
+  pool: PoolData;
+  symbol: string;
+  decimals: number;
+  color: string;
+  amount: bigint;
+  usd: number;
+  chainName: string;
+  chainLogo: string;
+}
+
+function useCrossChainLoans(
+  userAddress: `0x${string}` | undefined,
+  loans: PoolPosition[]
+) {
+  const baseClient = usePublicClient({ chainId: baseSepolia.id });
+
+  return useQuery<CrossChainLoanItem[]>({
+    queryKey: ["crossChainLoans", userAddress, loans.map((l) => l.pool.poolAddress)],
+    queryFn: async () => {
+      if (!baseClient || !userAddress || loans.length === 0) return [];
+
+      const items: CrossChainLoanItem[] = [];
+
+      for (const loan of loans) {
+        const baseToken = BASE_SEPOLIA_TOKEN_MAP[loan.pool.borrowSymbol];
+        if (!baseToken) continue;
+
+        const balance = (await baseClient.readContract({
+          address: baseToken.address,
+          abi: mockErc20Abi,
+          functionName: "balanceOf",
+          args: [userAddress],
+        })) as bigint;
+
+        if (balance > 0n) {
+          const usd =
+            Number(formatUnits(balance, baseToken.decimals)) *
+            Number(formatUnits(loan.pool.borrowPrice, loan.pool.borrowPriceDecimals));
+
+          items.push({
+            pool: loan.pool,
+            symbol: baseToken.symbol,
+            decimals: baseToken.decimals,
+            color: baseToken.color,
+            amount: balance,
+            usd,
+            chainName: "Base Sepolia",
+            chainLogo: "/chains/base-logo.png",
+          });
+        }
+      }
+
+      return items;
+    },
+    enabled: !!baseClient && !!userAddress && loans.length > 0,
     staleTime: 15_000,
     refetchInterval: 30_000,
   });
@@ -248,21 +384,8 @@ function EarnPositionRow({ pos }: { pos: PoolPosition }) {
   );
 }
 
-function BorrowPositionRow({
-  pos,
-  mode,
-}: {
-  pos: PoolPosition;
-  mode: "loan" | "collateral";
-}) {
-  const { pool, borrowAmount, borrowUsd, collateralAmount, collateralUsd } =
-    pos;
-
-  const amount = mode === "loan" ? borrowAmount : collateralAmount;
-  const decimals =
-    mode === "loan" ? pool.borrowDecimals : pool.collateralDecimals;
-  const symbol = mode === "loan" ? pool.borrowSymbol : pool.collateralSymbol;
-  const usd = mode === "loan" ? borrowUsd : collateralUsd;
+function BorrowPositionRow({ pos }: { pos: PoolPosition }) {
+  const { pool, borrowAmount, borrowUsd } = pos;
 
   return (
     <Link
@@ -286,22 +409,116 @@ function BorrowPositionRow({
                 size={36}
               />
             </div>
+            <Image
+              src="/chains/arbitrum-logo.png"
+              alt="Arbitrum Sepolia"
+              width={16}
+              height={16}
+              className="absolute -bottom-0.5 left-8 z-20 rounded-full ring-2 ring-[var(--bg-card)]"
+            />
           </div>
           <div>
             <div className="font-semibold text-[var(--text-primary)]">
               {pool.collateralSymbol}-{pool.borrowSymbol} Pool
             </div>
-            <div className="text-xs text-[var(--text-tertiary)]">
+            <div className="flex items-center gap-1.5 text-xs text-[var(--text-tertiary)]">
+              <Image
+                src="/chains/arbitrum-logo.png"
+                alt="Arbitrum Sepolia"
+                width={12}
+                height={12}
+                className="rounded-full"
+              />
               Arbitrum Sepolia
             </div>
           </div>
         </div>
         <div className="text-right">
           <div className="text-lg font-bold text-[var(--text-primary)]">
-            {fmt(amount, decimals)} {symbol}
+            {fmt(borrowAmount, pool.borrowDecimals)} {pool.borrowSymbol}
+          </div>
+          <div className="text-xs text-[var(--text-tertiary)]">
+            {formatUsd(borrowUsd)}
+          </div>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function CollateralPositionRow({ item }: { item: CollateralItem }) {
+  const { pool, tokenSymbol, tokenDecimals, tokenColor, amount, usd } = item;
+
+  return (
+    <Link
+      href={`/borrow/${pool.poolAddress}`}
+      className="block bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl p-5 hover:bg-[var(--bg-card-hover)] transition-colors"
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <TokenIcon symbol={tokenSymbol} color={tokenColor} size={36} />
+          <div>
+            <div className="font-semibold text-[var(--text-primary)]">
+              {tokenSymbol}
+            </div>
+            <div className="text-xs text-[var(--text-tertiary)]">
+              {pool.collateralSymbol}/{pool.borrowSymbol} Pool
+            </div>
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-lg font-bold text-[var(--text-primary)]">
+            {fmt(amount, tokenDecimals)} {tokenSymbol}
           </div>
           <div className="text-xs text-[var(--text-tertiary)]">
             {formatUsd(usd)}
+          </div>
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function CrossChainLoanRow({ item }: { item: CrossChainLoanItem }) {
+  return (
+    <Link
+      href={`/borrow/${item.pool.poolAddress}`}
+      className="block bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl p-5 hover:bg-[var(--bg-card-hover)] transition-colors"
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <TokenIcon symbol={item.symbol} color={item.color} size={36} />
+            <Image
+              src={item.chainLogo}
+              alt={item.chainName}
+              width={16}
+              height={16}
+              className="absolute -bottom-0.5 -right-0.5 rounded-full ring-2 ring-[var(--bg-card)]"
+            />
+          </div>
+          <div>
+            <div className="font-semibold text-[var(--text-primary)]">
+              {item.pool.collateralSymbol}-{item.pool.borrowSymbol} Pool
+            </div>
+            <div className="flex items-center gap-1.5 text-xs text-[var(--text-tertiary)]">
+              <Image
+                src={item.chainLogo}
+                alt={item.chainName}
+                width={12}
+                height={12}
+                className="rounded-full"
+              />
+              {item.chainName}
+            </div>
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-lg font-bold text-[var(--text-primary)]">
+            {fmt(item.amount, item.decimals)} {item.symbol}
+          </div>
+          <div className="text-xs text-[var(--text-tertiary)]">
+            {formatUsd(item.usd)}
           </div>
         </div>
       </div>
@@ -329,6 +546,12 @@ export default function Home() {
 
   // Fetch user positions across all pools
   const { data: userPositions } = useUserPositions(loadedPools, address);
+
+  // Fetch cross-chain loan balances (Base Sepolia) — only for pools with active loans
+  const { data: crossChainLoans } = useCrossChainLoans(
+    address,
+    userPositions?.loans ?? []
+  );
 
   // ── Animations ──
 
@@ -383,9 +606,83 @@ export default function Home() {
 
   const hasDeposits =
     userPositions?.deposits && userPositions.deposits.length > 0;
-  const hasLoans = userPositions?.loans && userPositions.loans.length > 0;
-  const hasCollaterals =
-    userPositions?.collaterals && userPositions.collaterals.length > 0;
+
+  const totalLoanUsd =
+    (userPositions?.totalBorrowUsd ?? 0) +
+    (crossChainLoans?.reduce((s, l) => s + l.usd, 0) ?? 0);
+
+  // Build combined position rows for the table
+  const positionRows = useMemo(() => {
+    if (!userPositions) return [];
+    // Get all pools where user has a position (has collateral or loan)
+    const poolMap = new Map<string, {
+      pool: PoolData;
+      collaterals: CollateralItem[];
+      borrowAmount: bigint;
+      borrowUsd: number;
+      collateralUsd: number;
+      crossChainLoan: CrossChainLoanItem | undefined;
+    }>();
+
+    // Add from collaterals
+    for (const c of userPositions.collaterals) {
+      const key = c.pool.poolAddress;
+      if (!poolMap.has(key)) {
+        poolMap.set(key, {
+          pool: c.pool,
+          collaterals: [],
+          borrowAmount: 0n,
+          borrowUsd: 0,
+          collateralUsd: 0,
+          crossChainLoan: undefined,
+        });
+      }
+      const entry = poolMap.get(key)!;
+      entry.collaterals.push(c);
+      entry.collateralUsd += c.usd;
+    }
+
+    // Add from loans
+    for (const l of userPositions.loans) {
+      const key = l.pool.poolAddress;
+      if (!poolMap.has(key)) {
+        poolMap.set(key, {
+          pool: l.pool,
+          collaterals: [],
+          borrowAmount: 0n,
+          borrowUsd: 0,
+          collateralUsd: 0,
+          crossChainLoan: undefined,
+        });
+      }
+      const entry = poolMap.get(key)!;
+      entry.borrowAmount = l.borrowAmount;
+      entry.borrowUsd = l.borrowUsd;
+    }
+
+    // Attach cross-chain loans
+    if (crossChainLoans) {
+      for (const cc of crossChainLoans) {
+        const key = cc.pool.poolAddress;
+        if (poolMap.has(key)) {
+          poolMap.get(key)!.crossChainLoan = cc;
+        } else {
+          poolMap.set(key, {
+            pool: cc.pool,
+            collaterals: [],
+            borrowAmount: 0n,
+            borrowUsd: 0,
+            collateralUsd: 0,
+            crossChainLoan: cc,
+          });
+        }
+      }
+    }
+
+    return Array.from(poolMap.values());
+  }, [userPositions, crossChainLoans]);
+
+  const hasPositions = positionRows.length > 0;
 
   return (
     <div className="space-y-12">
@@ -435,13 +732,12 @@ export default function Home() {
           Borrow
         </h2>
 
-        {/* Your loans / collateral card - USD total */}
+        {/* Your loans / collateral tabs — only changes USD total */}
         <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl p-6">
           <div
             ref={tabContainerRef}
             className="relative flex items-center gap-1 mb-3"
           >
-            {/* Floating indicator */}
             <div
               ref={tabIndicatorRef}
               className="absolute top-0 h-full rounded-lg bg-[var(--bg-tertiary)] pointer-events-none z-0"
@@ -473,32 +769,125 @@ export default function Home() {
           <div className="text-4xl font-bold text-[var(--text-primary)]">
             {isConnected && userPositions
               ? borrowTab === "loans"
-                ? formatUsd(userPositions.totalBorrowUsd)
+                ? formatUsd(totalLoanUsd)
                 : formatUsd(userPositions.totalCollateralUsd)
               : "$0.00"}
           </div>
         </div>
 
-        {/* Borrow position rows or empty state */}
-        {isConnected &&
-        ((borrowTab === "loans" && hasLoans) ||
-          (borrowTab === "collateral" && hasCollaterals)) ? (
-          <div className="space-y-3">
-            {borrowTab === "loans"
-              ? userPositions!.loans.map((pos) => (
-                  <BorrowPositionRow
-                    key={pos.pool.poolAddress}
-                    pos={pos}
-                    mode="loan"
-                  />
-                ))
-              : userPositions!.collaterals.map((pos) => (
-                  <BorrowPositionRow
-                    key={pos.pool.poolAddress}
-                    pos={pos}
-                    mode="collateral"
-                  />
-                ))}
+        {/* Position table — always visible */}
+        {isConnected && hasPositions ? (
+          <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl overflow-hidden">
+            {/* Table header */}
+            <div className="hidden md:grid grid-cols-[2fr_2fr_1fr_1fr] px-6 py-3 border-b border-[var(--border)]">
+              <div className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Collateral</div>
+              <div className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider">Loan</div>
+              <div className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider text-right">Rate</div>
+              <div className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wider text-right">Health</div>
+            </div>
+
+            {/* Rows — one per pool position */}
+            {positionRows.map((row) => {
+              const healthFactor = row.borrowUsd > 0 ? row.collateralUsd / row.borrowUsd : Infinity;
+              const healthStr = row.borrowUsd === 0 ? "N/A" : healthFactor === Infinity ? "∞" : healthFactor.toFixed(2);
+              const healthColor =
+                row.borrowUsd === 0
+                  ? "text-[var(--text-tertiary)]"
+                  : healthFactor >= 1.5
+                  ? "text-green-400"
+                  : healthFactor >= 1.1
+                  ? "text-yellow-400"
+                  : "text-red-400";
+
+              return (
+                <Link
+                  key={row.pool.poolAddress}
+                  href={`/borrow/${row.pool.poolAddress}`}
+                  className="grid md:grid-cols-[2fr_2fr_1fr_1fr] items-center px-6 py-4 border-b border-[var(--border)] last:border-b-0 hover:bg-[var(--bg-card-hover)] transition-colors cursor-pointer"
+                >
+                  {/* Collateral */}
+                  <div className="flex flex-col gap-1.5">
+                    {row.collaterals.map((c, i) => (
+                      <div key={i} className="flex items-center gap-1.5">
+                        <TokenIcon symbol={c.tokenSymbol} color={c.tokenColor} size={22} />
+                        <span className="text-sm font-medium text-[var(--text-primary)]">
+                          {fmt(c.amount, c.tokenDecimals)} {c.tokenSymbol}
+                        </span>
+                        <span className="text-[10px] text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] px-1.5 py-0.5 rounded">
+                          {formatUsd(c.usd)}
+                        </span>
+                      </div>
+                    ))}
+                    {row.collaterals.length === 0 && (
+                      <span className="text-sm text-[var(--text-tertiary)]">—</span>
+                    )}
+                  </div>
+
+                  {/* Loan */}
+                  <div className="flex flex-col gap-1.5">
+                    {/* Arbitrum loan */}
+                    {row.borrowAmount > 0n && (
+                      <div className="flex items-center gap-1.5">
+                        <div className="relative">
+                          <TokenIcon symbol={row.pool.borrowSymbol} color={getTokenColor(row.pool.borrowSymbol)} size={22} />
+                          <Image
+                            src="/chains/arbitrum-logo.png"
+                            alt="Arbitrum"
+                            width={10}
+                            height={10}
+                            className="absolute -bottom-0.5 -right-0.5 rounded-full ring-1 ring-[var(--bg-card)]"
+                          />
+                        </div>
+                        <span className="text-sm font-medium text-[var(--text-primary)]">
+                          {fmt(row.borrowAmount, row.pool.borrowDecimals)} {row.pool.borrowSymbol}
+                        </span>
+                        <span className="text-[10px] text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] px-1.5 py-0.5 rounded">
+                          {formatUsd(row.borrowUsd)}
+                        </span>
+                      </div>
+                    )}
+                    {/* Cross-chain loan (Base Sepolia) */}
+                    {row.crossChainLoan && row.crossChainLoan.amount > 0n && (
+                      <div className="flex items-center gap-1.5">
+                        <div className="relative">
+                          <TokenIcon symbol={row.crossChainLoan.symbol} color={row.crossChainLoan.color} size={22} />
+                          <Image
+                            src="/chains/base-logo.png"
+                            alt="Base Sepolia"
+                            width={10}
+                            height={10}
+                            className="absolute -bottom-0.5 -right-0.5 rounded-full ring-1 ring-[var(--bg-card)]"
+                          />
+                        </div>
+                        <span className="text-sm font-medium text-[var(--text-primary)]">
+                          {fmt(row.crossChainLoan.amount, row.crossChainLoan.decimals)} {row.crossChainLoan.symbol}
+                        </span>
+                        <span className="text-[10px] text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] px-1.5 py-0.5 rounded">
+                          {formatUsd(row.crossChainLoan.usd)}
+                        </span>
+                      </div>
+                    )}
+                    {row.borrowAmount === 0n && !row.crossChainLoan && (
+                      <span className="text-sm text-[var(--text-tertiary)]">—</span>
+                    )}
+                  </div>
+
+                  {/* Rate */}
+                  <div className="text-right">
+                    <span className="text-sm font-medium text-[var(--text-primary)]">
+                      {row.pool.borrowApy.toFixed(2)}%
+                    </span>
+                  </div>
+
+                  {/* Health */}
+                  <div className="text-right">
+                    <span className={`text-sm font-medium ${healthColor}`}>
+                      {healthStr}
+                    </span>
+                  </div>
+                </Link>
+              );
+            })}
           </div>
         ) : (
           <div className="bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl py-12 text-center">
