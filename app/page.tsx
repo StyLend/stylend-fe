@@ -4,7 +4,6 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { useAccount, usePublicClient } from "wagmi";
 import { formatUnits } from "viem";
-import { baseSepolia } from "wagmi/chains";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import TokenIcon from "@/components/TokenIcon";
 import { lendingPoolRouterAbi } from "@/lib/abis/lending-pool-router-abi";
@@ -12,7 +11,7 @@ import { lendingPoolFactoryAbi } from "@/lib/abis/lending-pool-factory-abi";
 import { tokenDataStreamAbi } from "@/lib/abis/token-data-stream-abi";
 import { mockErc20Abi } from "@/lib/abis/mock-erc20-abi";
 import { usePoolData, type PoolData } from "@/hooks/usePoolData";
-import { LENDING_POOL_ADDRESSES, CHAIN, BASE_SEPOLIA_TOKENS } from "@/lib/contracts";
+import { LENDING_POOL_ADDRESSES, CHAIN } from "@/lib/contracts";
 import { gsap } from "@/hooks/useGsap";
 
 const TOKEN_COLORS: Record<string, string> = {
@@ -275,77 +274,6 @@ function useUserPositions(
   });
 }
 
-// ── Cross-chain loan balances (Base Sepolia) ──
-
-// Map Arbitrum borrow token symbols to their Base Sepolia counterpart
-const BASE_SEPOLIA_TOKEN_MAP: Record<string, typeof BASE_SEPOLIA_TOKENS[number]> = {};
-for (const t of BASE_SEPOLIA_TOKENS) {
-  BASE_SEPOLIA_TOKEN_MAP[t.symbol] = t;
-}
-
-interface CrossChainLoanItem {
-  pool: PoolData;
-  symbol: string;
-  decimals: number;
-  color: string;
-  amount: bigint;
-  usd: number;
-  chainName: string;
-  chainLogo: string;
-}
-
-function useCrossChainLoans(
-  userAddress: `0x${string}` | undefined,
-  loans: PoolPosition[]
-) {
-  const baseClient = usePublicClient({ chainId: baseSepolia.id });
-
-  return useQuery<CrossChainLoanItem[]>({
-    queryKey: ["crossChainLoans", userAddress, loans.map((l) => l.pool.poolAddress)],
-    queryFn: async () => {
-      if (!baseClient || !userAddress || loans.length === 0) return [];
-
-      const items: CrossChainLoanItem[] = [];
-
-      for (const loan of loans) {
-        const baseToken = BASE_SEPOLIA_TOKEN_MAP[loan.pool.borrowSymbol];
-        if (!baseToken) continue;
-
-        const balance = (await baseClient.readContract({
-          address: baseToken.address,
-          abi: mockErc20Abi,
-          functionName: "balanceOf",
-          args: [userAddress],
-        })) as bigint;
-
-        if (balance > 0n) {
-          const usd =
-            Number(formatUnits(balance, baseToken.decimals)) *
-            Number(formatUnits(loan.pool.borrowPrice, loan.pool.borrowPriceDecimals));
-
-          items.push({
-            pool: loan.pool,
-            symbol: baseToken.symbol,
-            decimals: baseToken.decimals,
-            color: baseToken.color,
-            amount: balance,
-            usd,
-            chainName: "Base Sepolia",
-            chainLogo: "/chains/base-logo.png",
-          });
-        }
-      }
-
-      return items;
-    },
-    enabled: !!baseClient && !!userAddress && loans.length > 0,
-    staleTime: 0,
-    refetchInterval: 5_000,
-    refetchOnMount: "always",
-    refetchOnWindowFocus: "always",
-  });
-}
-
 // ── Position rows ──
 
 type BorrowTab = "loans" | "collateral";
@@ -422,7 +350,6 @@ export default function Home() {
   useEffect(() => {
     queryClient.refetchQueries({ queryKey: ["poolData"] });
     queryClient.refetchQueries({ queryKey: ["userPositions"] });
-    queryClient.refetchQueries({ queryKey: ["crossChainLoans"] });
   }, [queryClient]);
 
   // Fetch all pool data
@@ -432,12 +359,6 @@ export default function Home() {
 
   // Fetch user positions across all pools
   const { data: userPositions, isLoading: isLoadingPositions } = useUserPositions(loadedPools, address);
-
-  // Fetch cross-chain loan balances (Base Sepolia) — merged into combined loan total
-  const { data: crossChainLoans } = useCrossChainLoans(
-    address,
-    userPositions?.loans ?? []
-  );
 
   // ── Animations ──
 
@@ -493,9 +414,7 @@ export default function Home() {
   const hasDeposits =
     userPositions?.deposits && userPositions.deposits.length > 0;
 
-  const totalLoanUsd =
-    (userPositions?.totalBorrowUsd ?? 0) +
-    (crossChainLoans?.reduce((s, l) => s + l.usd, 0) ?? 0);
+  const totalLoanUsd = userPositions?.totalBorrowUsd ?? 0;
 
   // Build combined position rows for the table (Arbitrum + crosschain loans merged)
   const positionRows = useMemo(() => {
@@ -542,28 +461,8 @@ export default function Home() {
       entry.borrowUsd = l.borrowUsd;
     }
 
-    // Merge cross-chain loans into the same pool entry
-    if (crossChainLoans) {
-      for (const cc of crossChainLoans) {
-        const key = cc.pool.poolAddress;
-        if (poolMap.has(key)) {
-          const entry = poolMap.get(key)!;
-          entry.borrowAmount = entry.borrowAmount + cc.amount;
-          entry.borrowUsd = entry.borrowUsd + cc.usd;
-        } else {
-          poolMap.set(key, {
-            pool: cc.pool,
-            collaterals: [],
-            borrowAmount: cc.amount,
-            borrowUsd: cc.usd,
-            collateralUsd: 0,
-          });
-        }
-      }
-    }
-
     return Array.from(poolMap.values());
-  }, [userPositions, crossChainLoans]);
+  }, [userPositions]);
 
   const hasPositions = positionRows.length > 0;
 

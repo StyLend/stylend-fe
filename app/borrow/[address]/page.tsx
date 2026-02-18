@@ -13,7 +13,6 @@ import {
   usePublicClient,
 } from "wagmi";
 import { parseUnits, formatUnits, maxUint256, encodePacked } from "viem";
-import { baseSepolia } from "wagmi/chains";
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import TokenIcon from "@/components/TokenIcon";
 import { lendingPoolAbi } from "@/lib/abis/lending-pool-abi";
@@ -24,7 +23,7 @@ import { mockErc20Abi } from "@/lib/abis/mock-erc20-abi";
 import { tokenDataStreamAbi } from "@/lib/abis/token-data-stream-abi";
 import { multicallAbi } from "@/lib/abis/multicall-abi";
 import { oftAdapterAbi } from "@/lib/abis/oft-adapter-abi";
-import { CHAIN, MULTICALL_ADDRESS, BASE_SEPOLIA_TOKENS } from "@/lib/contracts";
+import { CHAIN, MULTICALL_ADDRESS } from "@/lib/contracts";
 import { gsap } from "@/hooks/useGsap";
 
 // LayerZero V3 extraOptions: executor lzReceive with 200k gas
@@ -310,28 +309,6 @@ export default function BorrowDetailPage() {
     refetchInterval: 5_000,
   });
 
-  // ── Cross-chain loan balance (Base Sepolia) ──
-  const baseClient = usePublicClient({ chainId: baseSepolia.id });
-  const baseToken = BASE_SEPOLIA_TOKENS.find((t) => t.symbol === borrowSymbol);
-
-  const { data: crossChainLoanBalance } = useQuery<bigint>({
-    queryKey: ["crossChainLoan", lendingPoolAddr, userAddress, borrowSymbol],
-    queryFn: async () => {
-      if (!baseClient || !userAddress || !baseToken) return 0n;
-      return (await baseClient.readContract({
-        address: baseToken.address,
-        abi: mockErc20Abi,
-        functionName: "balanceOf",
-        args: [userAddress],
-      })) as bigint;
-    },
-    enabled: !!baseClient && !!userAddress && !!baseToken,
-    staleTime: 0,
-    refetchInterval: 5_000,
-  });
-
-  const crossChainLoanAmount = crossChainLoanBalance ?? 0n;
-
   // ── Cross-chain borrow reads ──
 
   // OFT adapter for the borrow token
@@ -511,7 +488,7 @@ export default function BorrowDetailPage() {
       refetchAllCollaterals();
       queryClient.invalidateQueries({ queryKey: ["poolData"] });
       queryClient.invalidateQueries({ queryKey: ["userPositions"] });
-      queryClient.invalidateQueries({ queryKey: ["crossChainLoans"] });
+
     }
   }, [collateralConfirmed, txStep, refetchRouter, refetchUser, refetchCollateral, refetchBorrowShares, refetchAllCollaterals, queryClient]);
 
@@ -527,7 +504,7 @@ export default function BorrowDetailPage() {
       refetchAllCollaterals();
       queryClient.invalidateQueries({ queryKey: ["poolData"] });
       queryClient.invalidateQueries({ queryKey: ["userPositions"] });
-      queryClient.invalidateQueries({ queryKey: ["crossChainLoans"] });
+
     }
   }, [borrowConfirmed, txStep, refetchRouter, refetchUser, refetchCollateral, refetchBorrowShares, refetchAllCollaterals, queryClient]);
 
@@ -543,8 +520,6 @@ export default function BorrowDetailPage() {
       refetchAllCollaterals();
       queryClient.invalidateQueries({ queryKey: ["poolData"] });
       queryClient.invalidateQueries({ queryKey: ["userPositions"] });
-      queryClient.invalidateQueries({ queryKey: ["crossChainLoans"] });
-      queryClient.invalidateQueries({ queryKey: ["crossChainLoan"] });
     }
   }, [crossChainConfirmed, txStep, refetchRouter, refetchUser, refetchCollateral, refetchBorrowShares, refetchAllCollaterals, queryClient]);
 
@@ -733,7 +708,7 @@ export default function BorrowDetailPage() {
       refetchAllCollaterals();
       queryClient.invalidateQueries({ queryKey: ["poolData"] });
       queryClient.invalidateQueries({ queryKey: ["userPositions"] });
-      queryClient.invalidateQueries({ queryKey: ["crossChainLoans"] });
+
     }
   }, [repayLoanConfirmed, rlTxStep, refetchRouter, refetchUser, refetchCollateral, refetchBorrowShares, refetchAllCollaterals, queryClient]);
 
@@ -1097,7 +1072,7 @@ export default function BorrowDetailPage() {
                           allCollaterals.map((c) => (
                             <div key={c.symbol} className="flex items-center gap-2">
                               <div className="relative w-5 h-5 flex-shrink-0">
-                                <TokenIcon symbol={c.symbol} size={20} />
+                                <TokenIcon symbol={c.symbol} color={TOKEN_COLORS[c.symbol] ?? "#888"} size={20} />
                                 <Image src="/chains/arbitrum-logo.png" alt="Arbitrum" width={10} height={10} className="absolute -bottom-0.5 -right-0.5 rounded-full ring-1 ring-[var(--bg-secondary)]" />
                               </div>
                               <span className="text-sm font-semibold text-[var(--text-primary)]">
@@ -1114,9 +1089,9 @@ export default function BorrowDetailPage() {
                     <div className="bg-[var(--bg-secondary)] rounded-xl p-4">
                       <div className="text-xs text-[var(--text-tertiary)] mb-2">Loan</div>
                       <div className="flex items-center gap-2">
-                        <TokenIcon symbol={borrowSymbol} size={20} />
+                        <TokenIcon symbol={borrowSymbol} color={TOKEN_COLORS[borrowSymbol] ?? "#888"} size={20} />
                         <span className="text-sm font-semibold text-[var(--text-primary)]">
-                          {fmt(userBorrowAmount + crossChainLoanAmount, borrowDecimals)} {borrowSymbol}
+                          {fmt(userBorrowAmount, borrowDecimals)} {borrowSymbol}
                         </span>
                       </div>
                     </div>
@@ -2189,7 +2164,9 @@ export default function BorrowDetailPage() {
                     {activeTxHash && (
                       <div className="flex items-center justify-center">
                         <a
-                          href={`${CHAIN.blockExplorers?.default.url}/tx/${activeTxHash}`}
+                          href={isCrossChain && userAddress
+                            ? `https://testnet.layerzeroscan.com/address/${userAddress}`
+                            : `${CHAIN.blockExplorers?.default.url}/tx/${activeTxHash}`}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline"

@@ -55,6 +55,13 @@ function formatNum(num: number, maxDec: number = 4): string {
 
 export default function TradeCollateralPage() {
   const cardRef = useRef<HTMLDivElement>(null);
+  const buyOutputRef = useRef<HTMLDivElement>(null);
+  const settingsRef = useRef<HTMLDivElement>(null);
+  const tokenModalBackdropRef = useRef<HTMLDivElement>(null);
+  const tokenModalCardRef = useRef<HTMLDivElement>(null);
+  const rateDetailsRef = useRef<HTMLDivElement>(null);
+  const confirmBackdropRef = useRef<HTMLDivElement>(null);
+  const confirmCardRef = useRef<HTMLDivElement>(null);
   const { address: userAddress, isConnected } = useAccount();
   const queryClient = useQueryClient();
 
@@ -65,9 +72,13 @@ export default function TradeCollateralPage() {
   const [slippage, setSlippage] = useState(0.5);
   const [customSlippage, setCustomSlippage] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [settingsVisible, setSettingsVisible] = useState(false);
   const [feeTier, setFeeTier] = useState(1000);
   const [selectingFor, setSelectingFor] = useState<"in" | "out" | null>(null);
-  const [txStep, setTxStep] = useState<"idle" | "swapping" | "success" | "error">("idle");
+  const [tokenModalVisible, setTokenModalVisible] = useState(false);
+  const [rateVisible, setRateVisible] = useState(false);
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [txStep, setTxStep] = useState<"idle" | "review" | "swapping" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
 
   const activeSlippage = customSlippage && Number(customSlippage) > 0 ? Number(customSlippage) : slippage;
@@ -268,16 +279,21 @@ export default function TradeCollateralPage() {
     }
   }, [swapConfirmed, txStep, refetchPositionBalances, refetchRouterData, queryClient]);
 
-  const handleSwap = useCallback(() => {
+  const handleReview = useCallback(() => {
     if (!swapPool || !amountIn || Number(amountIn) <= 0) return;
     setErrorMsg("");
-
     const amount = parseUnits(amountIn, tokenIn.decimals);
     if (amount > positionBalance) {
       setErrorMsg("Insufficient position balance");
       return;
     }
+    setTxStep("review");
+    setShowConfirmModal(true);
+  }, [swapPool, amountIn, tokenIn.decimals, positionBalance]);
 
+  const confirmSwap = useCallback(() => {
+    if (!swapPool || !amountIn || Number(amountIn) <= 0) return;
+    const amount = parseUnits(amountIn, tokenIn.decimals);
     setTxStep("swapping");
     writeContract(
       {
@@ -302,7 +318,7 @@ export default function TradeCollateralPage() {
         },
       }
     );
-  }, [swapPool, amountIn, tokenIn, tokenOut, positionBalance, feeTier, writeContract]);
+  }, [swapPool, amountIn, tokenIn, tokenOut, feeTier, writeContract]);
 
   const handleFlip = () => {
     const prev = tokenIn;
@@ -310,6 +326,29 @@ export default function TradeCollateralPage() {
     setTokenOut(prev);
     setAmountIn("");
   };
+
+  const openTokenModal = (side: "in" | "out") => {
+    setSelectingFor(side);
+    setTokenModalVisible(true);
+  };
+
+  const closeTokenModal = useCallback(() => {
+    const backdrop = tokenModalBackdropRef.current;
+    const card = tokenModalCardRef.current;
+    if (!backdrop || !card) {
+      setSelectingFor(null);
+      setTokenModalVisible(false);
+      return;
+    }
+    const tl = gsap.timeline({
+      onComplete: () => {
+        setSelectingFor(null);
+        setTokenModalVisible(false);
+      },
+    });
+    tl.to(card, { opacity: 0, scale: 0.92, y: 20, duration: 0.22, ease: "power3.in" }, 0);
+    tl.to(backdrop, { opacity: 0, duration: 0.22, ease: "power2.in" }, 0.05);
+  }, []);
 
   const handleSelectToken = (token: TokenInfo) => {
     if (selectingFor === "in") {
@@ -319,7 +358,7 @@ export default function TradeCollateralPage() {
       if (token.symbol === tokenIn.symbol) setTokenIn(tokenOut);
       setTokenOut(token);
     }
-    setSelectingFor(null);
+    closeTokenModal();
     setAmountIn("");
   };
 
@@ -329,16 +368,33 @@ export default function TradeCollateralPage() {
     }
   };
 
-  const resetTx = () => {
-    setTxStep("idle");
-    setErrorMsg("");
-    resetSwap();
-  };
+  const closeConfirmModal = useCallback(() => {
+    const backdrop = confirmBackdropRef.current;
+    const card = confirmCardRef.current;
+    if (!backdrop || !card) {
+      setShowConfirmModal(false);
+      setTxStep("idle");
+      setErrorMsg("");
+      resetSwap();
+      return;
+    }
+    const tl = gsap.timeline({
+      onComplete: () => {
+        setShowConfirmModal(false);
+        setTxStep("idle");
+        setErrorMsg("");
+        resetSwap();
+        if (txStep === "success") setAmountIn("");
+      },
+    });
+    tl.to(card, { opacity: 0, scale: 0.92, y: 20, duration: 0.22, ease: "power3.in" }, 0);
+    tl.to(backdrop, { opacity: 0, duration: 0.22, ease: "power2.in" }, 0.05);
+  }, [resetSwap, txStep]);
 
   // ── Button state ──
 
   const buttonState = useMemo(() => {
-    if (txStep === "swapping" || isConfirming) return { text: "Swapping...", disabled: true };
+    if (txStep !== "idle" && txStep !== "error") return { text: "Review Swap", disabled: true };
     if (!amountIn || Number(amountIn) <= 0) return { text: "Enter an amount", disabled: true };
     if (positionBalance === 0n) return { text: "No position balance", disabled: true };
     try {
@@ -348,8 +404,8 @@ export default function TradeCollateralPage() {
       return { text: "Invalid amount", disabled: true };
     }
     if (!swapPool) return { text: "No eligible pool", disabled: true };
-    return { text: "Swap Collateral", disabled: false };
-  }, [txStep, isConfirming, amountIn, positionBalance, tokenIn.decimals, swapPool]);
+    return { text: "Review Swap", disabled: false };
+  }, [txStep, amountIn, positionBalance, tokenIn.decimals, swapPool]);
 
   // ── GSAP animation ──
 
@@ -359,6 +415,113 @@ export default function TradeCollateralPage() {
       gsap.to(cardRef.current, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out", delay: 0.2 });
     }
   }, []);
+
+  // Animate Buy output digits one by one when value changes
+  const prevOutputStr = useRef("");
+  useEffect(() => {
+    if (!buyOutputRef.current) return;
+    const chars = buyOutputRef.current.querySelectorAll<HTMLElement>(".digit-char");
+    if (!chars.length) return;
+    const outputStr = estimatedOutput > 0
+      ? formatNum(estimatedOutput, Math.min(tokenOut.decimals, 8))
+      : "0";
+    if (outputStr === prevOutputStr.current) return;
+    prevOutputStr.current = outputStr;
+    gsap.fromTo(chars,
+      { opacity: 0, y: 12 },
+      { opacity: 1, y: 0, duration: 0.25, stagger: 0.03, ease: "power2.out" }
+    );
+  }, [estimatedOutput, tokenOut.decimals]);
+
+  // Animate settings panel in/out
+  useEffect(() => {
+    if (showSettings) {
+      setSettingsVisible(true);
+    } else if (settingsRef.current) {
+      const el = settingsRef.current;
+      gsap.to(el, {
+        opacity: 0, height: 0, marginBottom: 0, duration: 0.25, ease: "power3.in",
+        onComplete: () => setSettingsVisible(false),
+      });
+    }
+  }, [showSettings]);
+
+  useEffect(() => {
+    if (!settingsVisible || !settingsRef.current) return;
+    const el = settingsRef.current;
+    gsap.fromTo(el,
+      { opacity: 0, height: 0, marginBottom: 0 },
+      { opacity: 1, height: "auto", marginBottom: 16, duration: 0.35, ease: "power3.out" }
+    );
+    const children = el.children;
+    if (children.length) {
+      gsap.fromTo(children,
+        { opacity: 0, y: 10 },
+        { opacity: 1, y: 0, duration: 0.3, stagger: 0.06, ease: "power2.out", delay: 0.1 }
+      );
+    }
+  }, [settingsVisible]);
+
+  // Animate rate details in/out
+  const showRate = rate > 0 && !!amountIn && Number(amountIn) > 0;
+  useEffect(() => {
+    if (showRate) {
+      setRateVisible(true);
+    } else if (rateDetailsRef.current) {
+      const el = rateDetailsRef.current;
+      gsap.to(el, {
+        opacity: 0, height: 0, marginTop: 0, duration: 0.25, ease: "power3.in",
+        onComplete: () => setRateVisible(false),
+      });
+    }
+  }, [showRate]);
+
+  useEffect(() => {
+    if (!rateVisible || !rateDetailsRef.current) return;
+    const el = rateDetailsRef.current;
+    gsap.fromTo(el,
+      { opacity: 0, height: 0, marginTop: 0 },
+      { opacity: 1, height: "auto", marginTop: 12, duration: 0.35, ease: "power3.out" }
+    );
+    const children = el.children;
+    if (children.length) {
+      gsap.fromTo(children,
+        { opacity: 0, y: 8 },
+        { opacity: 1, y: 0, duration: 0.3, stagger: 0.05, ease: "power2.out", delay: 0.1 }
+      );
+    }
+  }, [rateVisible]);
+
+  // Animate confirm modal in
+  useEffect(() => {
+    if (!showConfirmModal || !confirmBackdropRef.current || !confirmCardRef.current) return;
+    const backdrop = confirmBackdropRef.current;
+    const card = confirmCardRef.current;
+    gsap.fromTo(backdrop, { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "power2.out" });
+    gsap.fromTo(card, { opacity: 0, scale: 0.92, y: 20 }, { opacity: 1, scale: 1, y: 0, duration: 0.35, ease: "power3.out" });
+  }, [showConfirmModal]);
+
+  // Animate confirm modal content on txStep change
+  useEffect(() => {
+    if (!showConfirmModal || !confirmCardRef.current) return;
+    const rows = confirmCardRef.current.querySelectorAll<HTMLElement>(".modal-row");
+    if (rows.length) {
+      gsap.fromTo(rows, { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.35, stagger: 0.05, ease: "power2.out" });
+    }
+  }, [txStep, showConfirmModal]);
+
+  // Animate token modal in
+  useEffect(() => {
+    if (!tokenModalVisible || !tokenModalBackdropRef.current || !tokenModalCardRef.current) return;
+    const backdrop = tokenModalBackdropRef.current;
+    const card = tokenModalCardRef.current;
+    gsap.fromTo(backdrop, { opacity: 0 }, { opacity: 1, duration: 0.25, ease: "power2.out" });
+    gsap.fromTo(card, { opacity: 0, scale: 0.92, y: 20 }, { opacity: 1, scale: 1, y: 0, duration: 0.35, ease: "power3.out" });
+    const rows = card.querySelectorAll<HTMLElement>(".token-row");
+    if (rows.length) {
+      gsap.fromTo(rows, { opacity: 0, y: -12 }, { opacity: 1, y: 0, duration: 0.3, stagger: 0.04, ease: "power2.out", delay: 0.1 });
+    }
+  }, [tokenModalVisible]);
 
   // ── Render ──
 
@@ -382,8 +545,8 @@ export default function TradeCollateralPage() {
           </div>
 
           {/* Settings panel */}
-          {showSettings && (
-            <div className="mb-4 p-4 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl space-y-4">
+          {settingsVisible && (
+            <div ref={settingsRef} className="p-4 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl space-y-4 overflow-hidden">
               <div>
                 <div className="text-xs font-medium text-[var(--text-tertiary)] mb-2">Slippage Tolerance</div>
                 <div className="flex gap-2">
@@ -435,199 +598,376 @@ export default function TradeCollateralPage() {
             </div>
           )}
 
-          {/* Success state */}
-          {txStep === "success" ? (
-            <div className="text-center py-8">
-              <div className="w-16 h-16 rounded-full bg-green-500/10 flex items-center justify-center mx-auto mb-4">
-                <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-                  <path d="M8 16l6 6 10-10" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </div>
-              <p className="text-lg font-semibold text-[var(--text-primary)] mb-1">Swap Successful</p>
-              <p className="text-sm text-[var(--text-tertiary)] mb-6">
-                Your collateral has been swapped.
-              </p>
-              <button
-                onClick={resetTx}
-                className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
-              >
-                Done
-              </button>
-            </div>
-          ) : (
-            <>
-              {/* ── You Pay ── */}
-              <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-2xl p-4 mb-1.5">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-[var(--text-tertiary)]">Sell</span>
-                  {isConnected && (
-                    <span className="text-xs text-[var(--text-tertiary)]">
-                      Your Collateral: {formatNum(positionBalanceNum, 4)}
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center gap-3">
-                  <input
-                    type="text"
-                    inputMode="decimal"
-                    placeholder="0"
-                    value={amountIn}
-                    onChange={(e) => {
-                      if (/^\d*\.?\d*$/.test(e.target.value)) setAmountIn(e.target.value);
-                    }}
-                    disabled={txStep !== "idle"}
-                    className="flex-1 bg-transparent outline-none text-3xl font-semibold text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] min-w-0"
-                  />
-                  <button
-                    onClick={() => setSelectingFor("in")}
-                    className="flex items-center gap-2 px-3 py-2 rounded-full bg-[var(--bg-tertiary)] hover:bg-[var(--bg-card-hover)] transition-colors cursor-pointer shrink-0"
-                  >
-                    <TokenIcon symbol={tokenIn.symbol} color={tokenIn.color} size={24} />
-                    <span className="text-sm font-semibold text-[var(--text-primary)]">{tokenIn.symbol}</span>
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-[var(--text-tertiary)]">
-                      <path d="M3 4.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                </div>
-                <div className="flex items-center justify-between mt-2">
+          {/* ── Form (always visible) ── */}
+          <>
+            {/* ── You Pay ── */}
+            <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-2xl p-4 mb-1.5">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-[var(--text-tertiary)]">Sell</span>
+                {isConnected && (
                   <span className="text-xs text-[var(--text-tertiary)]">
-                    {inputUsdValue > 0 ? `$${formatNum(inputUsdValue, 2)}` : ""}
+                    Your Collateral: {formatNum(positionBalanceNum, 4)}
                   </span>
-                  {isConnected && positionBalance > 0n && txStep === "idle" && (
-                    <button
-                      onClick={handleSetMax}
-                      className="text-xs font-semibold text-[var(--accent)] hover:text-[var(--accent-light)] cursor-pointer"
-                    >
-                      MAX
-                    </button>
-                  )}
-                </div>
+                )}
               </div>
-
-              {/* ── Swap direction button ── */}
-              <div className="flex justify-center -my-3 relative z-10">
+              <div className="flex items-center gap-3">
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0"
+                  value={amountIn}
+                  onChange={(e) => {
+                    if (/^\d*\.?\d*$/.test(e.target.value)) setAmountIn(e.target.value);
+                  }}
+                  className="flex-1 bg-transparent outline-none text-3xl font-semibold text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] min-w-0"
+                />
                 <button
-                  onClick={handleFlip}
-                  disabled={txStep !== "idle"}
-                  className="w-10 h-10 rounded-xl bg-[var(--bg-card)] border-4 border-[var(--bg-primary)] hover:border-[var(--border-hover)] flex items-center justify-center transition-all hover:rotate-180 duration-300 cursor-pointer disabled:cursor-not-allowed"
+                  onClick={() => openTokenModal("in")}
+                  className="flex items-center gap-2 px-3 py-2 rounded-full bg-[var(--bg-tertiary)] hover:bg-[var(--bg-card-hover)] transition-colors cursor-pointer shrink-0"
                 >
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-[var(--text-secondary)]">
-                    <path d="M4 6l4-4 4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    <path d="M4 10l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  <TokenIcon symbol={tokenIn.symbol} color={tokenIn.color} size={24} />
+                  <span className="text-sm font-semibold text-[var(--text-primary)]">{tokenIn.symbol}</span>
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-[var(--text-tertiary)]">
+                    <path d="M3 4.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
                 </button>
               </div>
-
-              {/* ── You Receive ── */}
-              <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-2xl p-4 mt-1.5">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs text-[var(--text-tertiary)]">Buy</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <div className="flex-1 text-3xl font-semibold min-w-0 truncate" style={{ color: estimatedOutput > 0 ? "var(--text-primary)" : "var(--text-tertiary)" }}>
-                    {estimatedOutput > 0
-                      ? formatNum(estimatedOutput, Math.min(tokenOut.decimals, 8))
-                      : "0"}
-                  </div>
+              <div className="flex items-center justify-between mt-2">
+                <span className="text-xs text-[var(--text-tertiary)]">
+                  {inputUsdValue > 0 ? `$${formatNum(inputUsdValue, 2)}` : ""}
+                </span>
+                {isConnected && positionBalance > 0n && (
                   <button
-                    onClick={() => setSelectingFor("out")}
-                    className="flex items-center gap-2 px-3 py-2 rounded-full bg-[var(--bg-tertiary)] hover:bg-[var(--bg-card-hover)] transition-colors cursor-pointer shrink-0"
+                    onClick={handleSetMax}
+                    className="text-xs font-semibold text-[var(--accent)] hover:text-[var(--accent-light)] cursor-pointer"
                   >
-                    <TokenIcon symbol={tokenOut.symbol} color={tokenOut.color} size={24} />
-                    <span className="text-sm font-semibold text-[var(--text-primary)]">{tokenOut.symbol}</span>
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-[var(--text-tertiary)]">
-                      <path d="M3 4.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                  </button>
-                </div>
-                <div className="mt-2">
-                  <span className="text-xs text-[var(--text-tertiary)]">
-                    {outputUsdValue > 0 ? `$${formatNum(outputUsdValue, 2)}` : ""}
-                  </span>
-                </div>
-              </div>
-
-              {/* ── Rate & details ── */}
-              {rate > 0 && amountIn && Number(amountIn) > 0 && (
-                <div className="mt-3 p-3.5 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl space-y-2.5">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-[var(--text-tertiary)]">Rate</span>
-                    <span className="text-[var(--text-secondary)]">
-                      1 {tokenIn.symbol} = {formatNum(rate, 4)} {tokenOut.symbol}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-[var(--text-tertiary)]">Slippage Tolerance</span>
-                    <span className="text-[var(--text-secondary)]">{activeSlippage}%</span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-[var(--text-tertiary)]">Min. Received</span>
-                    <span className="text-[var(--text-secondary)]">
-                      {formatNum(estimatedOutput * (1 - activeSlippage / 100), Math.min(tokenOut.decimals, 8))} {tokenOut.symbol}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-[var(--text-tertiary)]">Fee Tier</span>
-                    <span className="text-[var(--text-secondary)]">
-                      {FEE_TIERS.find((f) => f.value === feeTier)?.label}
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* ── Error ── */}
-              {(errorMsg || txStep === "error") && (
-                <div className="mt-3 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
-                  {errorMsg || "Transaction failed. Please try again."}
-                  {txStep === "error" && (
-                    <button onClick={resetTx} className="block mt-2 text-red-300 underline cursor-pointer">
-                      Dismiss
-                    </button>
-                  )}
-                </div>
-              )}
-
-              {/* ── Action button ── */}
-              <div className="mt-4">
-                {!isConnected ? (
-                  <ConnectButton.Custom>
-                    {({ openConnectModal }) => (
-                      <button
-                        onClick={openConnectModal}
-                        className="w-full py-3.5 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
-                      >
-                        Connect Wallet
-                      </button>
-                    )}
-                  </ConnectButton.Custom>
-                ) : (
-                  <button
-                    onClick={handleSwap}
-                    disabled={buttonState.disabled}
-                    className="w-full py-3.5 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
-                  >
-                    {buttonState.text}
+                    MAX
                   </button>
                 )}
               </div>
-            </>
-          )}
+            </div>
+
+            {/* ── Swap direction button ── */}
+            <div className="flex justify-center -my-3 relative z-10">
+              <button
+                onClick={handleFlip}
+                className="w-10 h-10 rounded-xl bg-[var(--bg-card)] border-4 border-[var(--bg-primary)] hover:border-[var(--border-hover)] flex items-center justify-center transition-all hover:rotate-180 duration-300 cursor-pointer"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-[var(--text-secondary)]">
+                  <path d="M4 6l4-4 4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  <path d="M4 10l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </div>
+
+            {/* ── You Receive ── */}
+            <div className="bg-[var(--bg-secondary)] border border-[var(--border)] rounded-2xl p-4 mt-1.5">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs text-[var(--text-tertiary)]">Buy</span>
+              </div>
+              <div className="flex items-center gap-3">
+                <div ref={buyOutputRef} className="flex-1 text-3xl font-semibold min-w-0 truncate" style={{ color: estimatedOutput > 0 ? "var(--text-primary)" : "var(--text-tertiary)" }}>
+                  {(estimatedOutput > 0
+                    ? formatNum(estimatedOutput, Math.min(tokenOut.decimals, 8))
+                    : "0"
+                  ).split("").map((ch, i) => (
+                    <span key={`${ch}-${i}`} className="digit-char inline-block">{ch}</span>
+                  ))}
+                </div>
+                <button
+                  onClick={() => openTokenModal("out")}
+                  className="flex items-center gap-2 px-3 py-2 rounded-full bg-[var(--bg-tertiary)] hover:bg-[var(--bg-card-hover)] transition-colors cursor-pointer shrink-0"
+                >
+                  <TokenIcon symbol={tokenOut.symbol} color={tokenOut.color} size={24} />
+                  <span className="text-sm font-semibold text-[var(--text-primary)]">{tokenOut.symbol}</span>
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="text-[var(--text-tertiary)]">
+                    <path d="M3 4.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              </div>
+              <div className="mt-2">
+                <span className="text-xs text-[var(--text-tertiary)]">
+                  {outputUsdValue > 0 ? `$${formatNum(outputUsdValue, 2)}` : ""}
+                </span>
+              </div>
+            </div>
+
+            {/* ── Rate & details ── */}
+            {rateVisible && (
+              <div ref={rateDetailsRef} className="p-3.5 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl space-y-2.5 overflow-hidden">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-[var(--text-tertiary)]">Rate</span>
+                  <span className="text-[var(--text-secondary)]">
+                    1 {tokenIn.symbol} = {formatNum(rate, 4)} {tokenOut.symbol}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-[var(--text-tertiary)]">Slippage Tolerance</span>
+                  <span className="text-[var(--text-secondary)]">{activeSlippage}%</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-[var(--text-tertiary)]">Min. Received</span>
+                  <span className="text-[var(--text-secondary)]">
+                    {formatNum(estimatedOutput * (1 - activeSlippage / 100), Math.min(tokenOut.decimals, 8))} {tokenOut.symbol}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-[var(--text-tertiary)]">Fee Tier</span>
+                  <span className="text-[var(--text-secondary)]">
+                    {FEE_TIERS.find((f) => f.value === feeTier)?.label}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* ── Error ── */}
+            {errorMsg && txStep === "idle" && (
+              <div className="mt-3 p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                {errorMsg}
+              </div>
+            )}
+
+            {/* ── Action button ── */}
+            <div className="mt-4">
+              {!isConnected ? (
+                <ConnectButton.Custom>
+                  {({ openConnectModal }) => (
+                    <button
+                      onClick={openConnectModal}
+                      className="w-full py-3.5 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                    >
+                      Connect Wallet
+                    </button>
+                  )}
+                </ConnectButton.Custom>
+              ) : (
+                <button
+                  onClick={handleReview}
+                  disabled={buttonState.disabled}
+                  className="w-full py-3.5 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                >
+                  {buttonState.text}
+                </button>
+              )}
+            </div>
+          </>
         </div>
 
       </div>
+
+      {/* ── Confirm Modal (Review / Loading / Done) ── */}
+      {showConfirmModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center">
+          <div
+            ref={confirmBackdropRef}
+            className="absolute inset-0 bg-black/60 backdrop-blur-sm"
+            onClick={() => { if (txStep === "review" || txStep === "success") closeConfirmModal(); }}
+          />
+          <div ref={confirmCardRef} className="relative z-10 w-full max-w-[420px] mx-4 bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl shadow-2xl overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-6 pt-6 pb-4">
+              <h3 className="text-lg font-bold text-[var(--text-primary)]">
+                {txStep === "success" ? "Transaction Successful" : txStep === "swapping" ? "Confirm" : "Review Swap"}
+              </h3>
+              {(txStep === "review" || txStep === "success" || txStep === "error") && (
+                <button
+                  onClick={closeConfirmModal}
+                  className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </button>
+              )}
+            </div>
+
+            <div className="px-6 pb-6 space-y-4">
+              {/* ── Review ── */}
+              {txStep === "review" && (
+                <>
+                  <div className="modal-row bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4">
+                    <div className="text-xs text-[var(--text-tertiary)] mb-2">You Sell</div>
+                    <div className="flex items-center gap-2.5">
+                      <TokenIcon symbol={tokenIn.symbol} color={tokenIn.color} size={32} />
+                      <div>
+                        <div className="text-lg font-semibold text-[var(--text-primary)]">{amountIn} {tokenIn.symbol}</div>
+                        <div className="text-xs text-[var(--text-tertiary)]">${formatNum(inputUsdValue, 2)}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-center -my-2 relative z-10">
+                    <div className="w-8 h-8 rounded-lg bg-[var(--bg-card)] border-2 border-[var(--border)] flex items-center justify-center">
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="text-[var(--text-tertiary)]">
+                        <path d="M7 3v8M7 11l-3-3M7 11l3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                  </div>
+
+                  <div className="modal-row bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-4">
+                    <div className="text-xs text-[var(--text-tertiary)] mb-2">You Receive</div>
+                    <div className="flex items-center gap-2.5">
+                      <TokenIcon symbol={tokenOut.symbol} color={tokenOut.color} size={32} />
+                      <div>
+                        <div className="text-lg font-semibold text-[var(--text-primary)]">~{formatNum(estimatedOutput, Math.min(tokenOut.decimals, 8))} {tokenOut.symbol}</div>
+                        <div className="text-xs text-[var(--text-tertiary)]">${formatNum(outputUsdValue, 2)}</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="modal-row bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-3.5 space-y-2.5">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-[var(--text-tertiary)]">Rate</span>
+                      <span className="text-[var(--text-secondary)]">1 {tokenIn.symbol} = {formatNum(rate, 4)} {tokenOut.symbol}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-[var(--text-tertiary)]">Slippage Tolerance</span>
+                      <span className="text-[var(--text-secondary)]">{activeSlippage}%</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-[var(--text-tertiary)]">Min. Received</span>
+                      <span className="text-[var(--text-secondary)]">{formatNum(estimatedOutput * (1 - activeSlippage / 100), Math.min(tokenOut.decimals, 8))} {tokenOut.symbol}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-[var(--text-tertiary)]">Fee Tier</span>
+                      <span className="text-[var(--text-secondary)]">{FEE_TIERS.find((f) => f.value === feeTier)?.label}</span>
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={confirmSwap}
+                    className="modal-row w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                  >
+                    Confirm Swap
+                  </button>
+                </>
+              )}
+
+              {/* ── Loading / Confirming ── */}
+              {txStep === "swapping" && (
+                <div className="space-y-4">
+                  {swapTxHash && (
+                    <div className="modal-row flex items-center justify-between">
+                      <span className="text-xs text-[var(--text-tertiary)]">Swap Collateral</span>
+                      <a
+                        href={`${CHAIN.blockExplorers?.default.url}/tx/${swapTxHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline"
+                      >
+                        {(swapTxHash as string).slice(0, 6)}...{(swapTxHash as string).slice(-4)}
+                        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                          <path d="M3 1h6v6M9 1L1 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </a>
+                    </div>
+                  )}
+
+                  <div className="modal-row w-full h-1.5 bg-[var(--bg-tertiary)] rounded-full overflow-hidden">
+                    <div
+                      className="h-full bg-[var(--accent)] rounded-full animate-pulse"
+                      style={{ width: isConfirming ? "70%" : "35%", transition: "width 1.5s ease-in-out" }}
+                    />
+                  </div>
+
+                  <div className="modal-row flex items-center justify-center gap-2 py-2">
+                    <svg className="animate-spin h-4 w-4 text-[var(--accent)]" viewBox="0 0 24 24" fill="none">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    <span className="text-sm text-[var(--text-secondary)]">
+                      {isConfirming ? "Confirming transaction..." : "Proceed in your wallet"}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Error inside modal ── */}
+              {txStep === "error" && (
+                <div className="space-y-4">
+                  <div className="modal-row p-3 rounded-xl bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                    {errorMsg || "Transaction failed. Please try again."}
+                  </div>
+                  <button
+                    onClick={() => { setTxStep("review"); setErrorMsg(""); resetSwap(); }}
+                    className="modal-row w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
+              {/* ── Done ── */}
+              {txStep === "success" && (
+                <div className="space-y-4">
+                  <div className="modal-row flex flex-col items-center py-4">
+                    <div className="w-14 h-14 rounded-full bg-green-500/10 flex items-center justify-center mb-3">
+                      <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+                        <path d="M7 14l5 5 9-9" stroke="#22c55e" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </div>
+                    <p className="text-sm text-[var(--text-secondary)]">Collateral swapped successfully</p>
+                  </div>
+
+                  <div className="modal-row bg-[var(--bg-secondary)] border border-[var(--border)] rounded-xl p-3.5 space-y-2.5">
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-[var(--text-tertiary)]">Sold</span>
+                      <div className="flex items-center gap-1.5">
+                        <TokenIcon symbol={tokenIn.symbol} color={tokenIn.color} size={18} />
+                        <span className="text-[var(--text-primary)] font-medium">{amountIn} {tokenIn.symbol}</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className="text-[var(--text-tertiary)]">Received</span>
+                      <div className="flex items-center gap-1.5">
+                        <TokenIcon symbol={tokenOut.symbol} color={tokenOut.color} size={18} />
+                        <span className="text-[var(--text-primary)] font-medium">~{formatNum(estimatedOutput, Math.min(tokenOut.decimals, 4))} {tokenOut.symbol}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {swapTxHash && (
+                    <div className="modal-row flex items-center justify-center">
+                      <a
+                        href={`${CHAIN.blockExplorers?.default.url}/tx/${swapTxHash}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1 text-xs text-[var(--accent)] hover:underline"
+                      >
+                        View on explorer
+                        <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                          <path d="M3 1h6v6M9 1L1 9" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </a>
+                    </div>
+                  )}
+
+                  <button
+                    onClick={closeConfirmModal}
+                    className="modal-row w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                  >
+                    Done
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Token Selector Modal ── */}
       {selectingFor && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div
+            ref={tokenModalBackdropRef}
             className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-            onClick={() => setSelectingFor(null)}
+            onClick={closeTokenModal}
           />
-          <div className="relative bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl w-full max-w-sm overflow-hidden">
+          <div ref={tokenModalCardRef} className="relative bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl w-full max-w-sm overflow-hidden">
             <div className="flex items-center justify-between px-5 py-4 border-b border-[var(--border)]">
               <h3 className="text-base font-semibold text-[var(--text-primary)]">Select Token</h3>
               <button
-                onClick={() => setSelectingFor(null)}
+                onClick={closeTokenModal}
                 className="p-1.5 rounded-lg hover:bg-[var(--bg-tertiary)] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors cursor-pointer"
               >
                 <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
@@ -649,7 +989,7 @@ export default function TradeCollateralPage() {
                     key={token.symbol}
                     onClick={() => handleSelectToken(token)}
                     disabled={isSelected}
-                    className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-colors ${
+                    className={`token-row w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-colors ${
                       isSelected
                         ? "bg-[var(--accent-glow)] cursor-default"
                         : "hover:bg-[var(--bg-tertiary)] cursor-pointer"
