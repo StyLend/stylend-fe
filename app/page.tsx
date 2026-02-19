@@ -18,6 +18,7 @@ import { gsap } from "@/hooks/useGsap";
 import PoolAreaChart from "@/components/charts/PoolAreaChart";
 import TimePeriodSelect, { type TimePeriod, filterByTimePeriod } from "@/components/charts/TimePeriodSelect";
 import { useAggregatedSnapshots, type PoolCollateralInfo } from "@/hooks/useAggregatedSnapshots";
+import { useUserActivity, type ActivityFilter } from "@/hooks/useUserActivity";
 
 const TOKEN_COLORS: Record<string, string> = {
   ETH: "#627eea", WETH: "#627eea", WBTC: "#f7931a", USDC: "#2775ca",
@@ -26,6 +27,10 @@ const TOKEN_COLORS: Record<string, string> = {
 
 function getTokenColor(symbol: string): string {
   return TOKEN_COLORS[symbol.toUpperCase()] ?? "#6366f1";
+}
+
+function shortenAddr(addr: string): string {
+  return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
 }
 
 function formatUsd(value: number): string {
@@ -364,6 +369,10 @@ export default function Home() {
   const collateralTabRef = useRef<HTMLButtonElement>(null);
   const isFirstTab = useRef(true);
   const borrowBalanceRef = useRef<HTMLDivElement>(null);
+  const [activityFilter, setActivityFilter] = useState<ActivityFilter>("all");
+  const [activityPage, setActivityPage] = useState(1);
+  const activitySectionRef = useRef<HTMLDivElement>(null);
+  const activityTableRef = useRef<HTMLDivElement>(null);
 
   // Force refetch all dashboard data on mount (after navigating from action pages)
   useEffect(() => {
@@ -401,6 +410,30 @@ export default function Home() {
     () => (aggregatedSnapshots?.depositChart ? filterByTimePeriod(aggregatedSnapshots.depositChart, depositPeriod) : []),
     [aggregatedSnapshots, depositPeriod],
   );
+
+  // ── User activity ──
+  const { data: userActivity, isLoading: isActivityLoading } = useUserActivity(address);
+
+  const poolLookup = useMemo(() => {
+    const map = new Map<string, PoolData>();
+    for (const pool of loadedPools) {
+      map.set(pool.poolAddress.toLowerCase(), pool);
+    }
+    return map;
+  }, [loadedPools]);
+
+  const ACTIVITY_PER_PAGE = 10;
+  const filteredActivity = useMemo(() => {
+    if (!userActivity) return [];
+    if (activityFilter === "all") return userActivity;
+    return userActivity.filter((t) => t.type === activityFilter);
+  }, [userActivity, activityFilter]);
+  const activityTotalPages = Math.max(1, Math.ceil(filteredActivity.length / ACTIVITY_PER_PAGE));
+  const paginatedActivity = useMemo(
+    () => filteredActivity.slice((activityPage - 1) * ACTIVITY_PER_PAGE, activityPage * ACTIVITY_PER_PAGE),
+    [filteredActivity, activityPage],
+  );
+  useEffect(() => { setActivityPage(1); }, [activityFilter]);
 
   // ── Expand/collapse deposit chart ──
   const toggleDepositChart = useCallback(() => {
@@ -517,7 +550,28 @@ export default function Home() {
         "-=0.3"
       );
     }
+
+    if (activitySectionRef.current) {
+      gsap.set(activitySectionRef.current, { opacity: 0, y: 25 });
+      tl.to(
+        activitySectionRef.current,
+        { opacity: 1, y: 0, duration: 0.6, ease: "power3.out" },
+        "-=0.3"
+      );
+    }
   }, []);
+
+  // Animate activity rows on page/filter change
+  useEffect(() => {
+    if (!activityTableRef.current || paginatedActivity.length === 0) return;
+    const rows = activityTableRef.current.querySelectorAll<HTMLElement>(".activity-row");
+    if (!rows.length) return;
+    gsap.fromTo(
+      rows,
+      { opacity: 0, y: 14 },
+      { opacity: 1, y: 0, duration: 0.35, stagger: 0.04, ease: "power3.out" },
+    );
+  }, [paginatedActivity, activityFilter, activityPage]);
 
   const hasDeposits =
     userPositions?.deposits && userPositions.deposits.length > 0;
@@ -993,6 +1047,198 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      {/* ──── Activity section ──── */}
+      {isConnected && (
+        <div ref={activitySectionRef} className="space-y-5">
+          <h2 className="text-2xl font-bold text-[var(--text-primary)] font-panchang">
+            Activity
+          </h2>
+
+          <div className="space-y-4">
+            <div className="flex items-center justify-between flex-wrap gap-2">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {(["all", "deposit", "withdraw", "borrow", "repay", "supply-collateral", "withdraw-collateral"] as const).map((f) => (
+                  <button
+                    key={f}
+                    onClick={() => setActivityFilter(f)}
+                    className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
+                      activityFilter === f
+                        ? "bg-white/[0.1] text-[var(--text-primary)]"
+                        : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:bg-white/[0.04]"
+                    }`}
+                  >
+                    {f === "all" ? "All"
+                      : f === "deposit" ? "Deposits"
+                      : f === "withdraw" ? "Withdrawals"
+                      : f === "borrow" ? "Borrows"
+                      : f === "repay" ? "Repays"
+                      : f === "supply-collateral" ? "Supply Collateral"
+                      : "Withdraw Collateral"}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div ref={activityTableRef} className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl overflow-hidden">
+              {/* Header */}
+              <div className="grid grid-cols-[1.5fr_1.2fr_2fr_1.5fr_1.5fr] px-6 py-3 border-b border-white/[0.06] text-xs text-[var(--text-tertiary)] font-medium">
+                <span className="flex items-center gap-1">
+                  Date
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                    <path d="M5 7L2 4h6L5 7z" fill="currentColor" />
+                  </svg>
+                </span>
+                <span>Type</span>
+                <span>Amount</span>
+                <span>Pool</span>
+                <span className="text-right">Transaction</span>
+              </div>
+
+              {/* Rows */}
+              {isActivityLoading ? (
+                Array.from({ length: 5 }).map((_, i) => (
+                  <div key={i} className="grid grid-cols-[1.5fr_1.2fr_2fr_1.5fr_1.5fr] items-center px-6 py-4 border-b border-white/[0.06] last:border-b-0">
+                    <div className="h-4 w-32 rounded bg-[var(--bg-tertiary)] animate-pulse" />
+                    <div className="h-4 w-24 rounded bg-[var(--bg-tertiary)] animate-pulse" />
+                    <div className="h-4 w-36 rounded bg-[var(--bg-tertiary)] animate-pulse" />
+                    <div className="h-4 w-28 rounded bg-[var(--bg-tertiary)] animate-pulse" />
+                    <div className="h-4 w-28 rounded bg-[var(--bg-tertiary)] animate-pulse ml-auto" />
+                  </div>
+                ))
+              ) : paginatedActivity.length === 0 ? (
+                <div className="py-12 text-center text-sm text-[var(--text-tertiary)]">
+                  No transactions found
+                </div>
+              ) : (
+                paginatedActivity.map((tx) => {
+                  const pool = poolLookup.get(tx.lendingPool.toLowerCase());
+                  if (!pool) return null;
+
+                  const isCollateralTx = tx.type === "supply-collateral" || tx.type === "withdraw-collateral";
+                  const decimals = isCollateralTx ? pool.collateralDecimals : pool.borrowDecimals;
+                  const symbol = isCollateralTx ? pool.collateralSymbol : pool.borrowSymbol;
+                  const price = isCollateralTx
+                    ? Number(formatUnits(pool.collateralPrice, pool.collateralPriceDecimals))
+                    : Number(formatUnits(pool.borrowPrice, pool.borrowPriceDecimals));
+                  const amount = Number(formatUnits(BigInt(tx.amount), decimals));
+                  const usd = amount * price;
+                  const fmtUsd = usd >= 1_000_000
+                    ? `$${(usd / 1_000_000).toFixed(2)}M`
+                    : usd >= 1_000
+                      ? `$${(usd / 1_000).toFixed(2)}k`
+                      : `$${usd.toFixed(2)}`;
+                  const fmtAmount = amount >= 1_000_000
+                    ? `${(amount / 1_000_000).toFixed(2)}M`
+                    : amount >= 1_000
+                      ? `${amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}`
+                      : amount.toFixed(2);
+
+                  const date = new Date(tx.timestamp * 1000);
+                  const dateStr =
+                    date.getFullYear() +
+                    "-" + String(date.getMonth() + 1).padStart(2, "0") +
+                    "-" + String(date.getDate()).padStart(2, "0") +
+                    " " + String(date.getHours()).padStart(2, "0") +
+                    ":" + String(date.getMinutes()).padStart(2, "0") +
+                    ":" + String(date.getSeconds()).padStart(2, "0");
+
+                  const typeLabel =
+                    tx.type === "deposit" ? "Deposit"
+                    : tx.type === "withdraw" ? "Withdraw"
+                    : tx.type === "borrow" ? "Borrow"
+                    : tx.type === "repay" ? "Repay"
+                    : tx.type === "supply-collateral" ? "Supply Collateral"
+                    : "Withdraw Collateral";
+
+                  return (
+                    <div
+                      key={tx.id}
+                      className="activity-row grid grid-cols-[1.5fr_1.2fr_2fr_1.5fr_1.5fr] items-center px-6 py-4 border-b border-white/[0.06] last:border-b-0 hover:bg-white/[0.03] transition-colors"
+                    >
+                      {/* Date */}
+                      <span className="text-sm text-[var(--text-secondary)]">{dateStr}</span>
+
+                      {/* Type */}
+                      <span className="text-sm text-[var(--text-primary)]">{typeLabel}</span>
+
+                      {/* Amount */}
+                      <div className="flex items-center gap-2">
+                        <TokenIcon symbol={symbol} color={getTokenColor(symbol)} size={20} />
+                        <span className="text-sm font-medium text-[var(--text-primary)]">
+                          {fmtAmount} {symbol}
+                        </span>
+                        {price > 0 && (
+                          <span className="text-[10px] text-[var(--text-tertiary)] bg-white/[0.06] px-1.5 py-0.5 rounded">
+                            {fmtUsd}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Pool */}
+                      <div className="flex items-center gap-2">
+                        <div className="relative w-9 h-5 flex-shrink-0">
+                          <div className="absolute left-0 z-10">
+                            <TokenIcon symbol={pool.collateralSymbol} color={getTokenColor(pool.collateralSymbol)} size={20} />
+                          </div>
+                          <div className="absolute left-3">
+                            <TokenIcon symbol={pool.borrowSymbol} color={getTokenColor(pool.borrowSymbol)} size={20} />
+                          </div>
+                        </div>
+                        <span className="text-sm text-[var(--text-secondary)]">
+                          {pool.collateralSymbol}/{pool.borrowSymbol}
+                        </span>
+                      </div>
+
+                      {/* Transaction */}
+                      <div className="flex items-center justify-end gap-1.5">
+                        <a
+                          href={`${CHAIN.blockExplorers?.default.url}/tx/${tx.txHash}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1.5 text-sm font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                        >
+                          {shortenAddr(tx.txHash)}
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="flex-shrink-0">
+                            <path d="M4 1h7v7M11 1L1 11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </a>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+
+            {/* Pagination */}
+            {filteredActivity.length > ACTIVITY_PER_PAGE && (
+              <div className="flex items-center justify-center gap-4 pt-2">
+                <button
+                  onClick={() => setActivityPage((p) => Math.max(1, p - 1))}
+                  disabled={activityPage <= 1}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/[0.04] border border-white/[0.08] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/[0.08] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path d="M8.5 3.5L5 7l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+                <span className="text-sm text-[var(--text-secondary)]">
+                  {activityPage} of {activityTotalPages}
+                </span>
+                <button
+                  onClick={() => setActivityPage((p) => Math.min(activityTotalPages, p + 1))}
+                  disabled={activityPage >= activityTotalPages}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/[0.04] border border-white/[0.08] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/[0.08] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                >
+                  <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                    <path d="M5.5 3.5L9 7l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
