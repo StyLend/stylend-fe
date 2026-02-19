@@ -48,6 +48,25 @@ function fmt(value: bigint, decimals: number): string {
 
 const ZERO_ADDR = "0x0000000000000000000000000000000000000000" as const;
 
+// Flat zero-line chart data for when there are no positions
+const emptyChartData = (() => {
+  const now = Math.floor(Date.now() / 1000);
+  const day = 86400;
+  return Array.from({ length: 7 }, (_, i) => {
+    const ts = now - (6 - i) * day;
+    const d = new Date(ts * 1000);
+    return {
+      timestamp: ts,
+      date: d.toLocaleDateString("en-US", { day: "numeric", month: "short" }),
+      totalDeposits: 0,
+      totalBorrows: 0,
+      totalCollateral: 0,
+      supplyApy: 0,
+      borrowRate: 0,
+    };
+  });
+})();
+
 const KNOWN_TOKENS = [
   { symbol: "WETH", address: "0x48b3f901d040796f9cda37469fc5436fca711366" as `0x${string}`, decimals: 18, color: "#627EEA" },
   { symbol: "USDC", address: "0x5602a3f9b8a935df32871bb1c6289f24620233f7" as `0x${string}`, decimals: 6, color: "#2775CA" },
@@ -695,19 +714,13 @@ export default function Home() {
             <div ref={depositChartRef} className="mt-4 grid grid-cols-1 md:grid-cols-[1fr_220px] gap-4">
               {/* Chart */}
               <div>
-                {depositChartData.length > 0 ? (
-                  <PoolAreaChart
-                    data={depositChartData}
-                    dataKey="totalDeposits"
-                    gradientId="dashDepositGradient"
-                    formatValue={(v) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                    yAxisFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}K` : `$${v.toFixed(0)}`}
-                  />
-                ) : (
-                  <div className="h-[220px] flex items-center justify-center text-sm text-[var(--text-tertiary)]">
-                    No historical data available
-                  </div>
-                )}
+                <PoolAreaChart
+                  data={depositChartData.length > 0 ? depositChartData : emptyChartData}
+                  dataKey="totalDeposits"
+                  gradientId="dashDepositGradient"
+                  formatValue={(v) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                  yAxisFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}K` : `$${v.toFixed(0)}`}
+                />
               </div>
 
               {/* Net APY sidebar */}
@@ -878,19 +891,15 @@ export default function Home() {
             <div ref={borrowChartRef} className="mt-4 grid grid-cols-1 md:grid-cols-[1fr_220px] gap-4">
               {/* Chart */}
               <div>
-                {(borrowTab === "collateral" ? collateralChartData : borrowChartData).length > 0 ? (
-                  <PoolAreaChart
-                    data={borrowTab === "collateral" ? collateralChartData : borrowChartData}
-                    dataKey={borrowTab === "collateral" ? "totalCollateral" : "totalBorrows"}
-                    gradientId={`dashBorrow${borrowTab}Gradient`}
-                    formatValue={(v) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                    yAxisFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}K` : `$${v.toFixed(0)}`}
-                  />
-                ) : (
-                  <div className="h-[220px] flex items-center justify-center text-sm text-[var(--text-tertiary)]">
-                    No historical data available
-                  </div>
-                )}
+                <PoolAreaChart
+                  data={(borrowTab === "collateral" ? collateralChartData : borrowChartData).length > 0
+                    ? (borrowTab === "collateral" ? collateralChartData : borrowChartData)
+                    : emptyChartData}
+                  dataKey={borrowTab === "collateral" ? "totalCollateral" : "totalBorrows"}
+                  gradientId={`dashBorrow${borrowTab}Gradient`}
+                  formatValue={(v) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                  yAxisFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}K` : `$${v.toFixed(0)}`}
+                />
               </div>
 
               {/* Net Rate sidebar */}
