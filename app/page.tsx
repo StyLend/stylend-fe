@@ -311,18 +311,18 @@ function EarnPositionsTable({ deposits }: { deposits: PoolPosition[] }) {
   return (
     <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl overflow-hidden">
       {/* Header */}
-      <div className="grid grid-cols-[2fr_1fr_1.5fr_1.5fr] px-6 py-3 border-b border-white/[0.06] text-xs text-[var(--text-tertiary)] font-medium">
+      <div className="grid grid-cols-[2fr_1fr] md:grid-cols-[2fr_1fr_1.5fr_1.5fr] px-4 md:px-6 py-3 border-b border-white/[0.06] text-xs text-[var(--text-tertiary)] font-medium">
         <span>Asset</span>
-        <span className="text-center">APY</span>
-        <span className="text-center">Total Liquidity</span>
-        <span className="text-right">Pool</span>
+        <span className="text-right md:text-center">APY</span>
+        <span className="hidden md:block text-center">Total Liquidity</span>
+        <span className="hidden md:block text-right">Pool</span>
       </div>
       {/* Rows */}
       {deposits.map((pos) => (
         <Link
           key={pos.pool.poolAddress}
           href={`/earn/${pos.pool.poolAddress}`}
-          className="grid grid-cols-[2fr_1fr_1.5fr_1.5fr] items-center px-6 py-4 hover:bg-white/[0.05] transition-colors border-b border-white/[0.06] last:border-b-0"
+          className="grid grid-cols-[2fr_1fr] md:grid-cols-[2fr_1fr_1.5fr_1.5fr] items-center px-4 md:px-6 py-4 hover:bg-white/[0.05] transition-colors border-b border-white/[0.06] last:border-b-0"
         >
           {/* Asset: logo + balance */}
           <div className="flex items-center gap-3">
@@ -337,19 +337,19 @@ function EarnPositionsTable({ deposits }: { deposits: PoolPosition[] }) {
             </div>
           </div>
           {/* APY */}
-          <div className="text-center">
+          <div className="text-right md:text-center">
             <span className="text-sm font-semibold text-[var(--text-primary)]">
               {pos.pool.supplyApy.toFixed(2)}%
             </span>
           </div>
           {/* Total Liquidity */}
-          <div className="text-center">
+          <div className="hidden md:block text-center">
             <span className="text-sm font-medium text-[var(--text-primary)]">
               {fmt(pos.pool.liquidity, pos.pool.borrowDecimals)} {pos.pool.borrowSymbol}
             </span>
           </div>
           {/* Pool: pair logos */}
-          <div className="flex items-center justify-end gap-2">
+          <div className="hidden md:flex items-center justify-end gap-2">
             <div className="relative w-12 h-7">
               <div className="absolute left-0 z-10">
                 <TokenIcon symbol={pos.pool.collateralSymbol} color={getTokenColor(pos.pool.collateralSymbol)} size={28} />
@@ -677,7 +677,7 @@ export default function Home() {
         </h2>
 
         {/* Your deposits card - USD total + expandable chart */}
-        <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl p-6">
+        <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl p-4 md:p-6">
           <div className="flex items-center gap-2 mb-1">
             <span className="text-sm text-[var(--text-secondary)]">Your deposits</span>
             <button
@@ -694,11 +694,11 @@ export default function Home() {
               />
             </button>
           </div>
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-end justify-between gap-2">
             {isDataLoading ? (
-              <div className="h-10 w-40 bg-[var(--bg-tertiary)] rounded-lg animate-pulse" />
+              <div className="h-8 md:h-10 w-40 bg-[var(--bg-tertiary)] rounded-lg animate-pulse" />
             ) : (
-              <div className="text-4xl font-bold text-[var(--text-primary)]">
+              <div className="text-2xl md:text-4xl font-bold text-[var(--text-primary)]">
                 {isConnected && userPositions
                   ? formatUsd(userPositions.totalDepositUsd)
                   : "$0.00"}
@@ -762,14 +762,14 @@ export default function Home() {
         {/* Pool positions or empty state */}
         {isDataLoading ? (
           <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl overflow-hidden">
-            <div className="grid grid-cols-[2fr_1fr_1.5fr_1.5fr] px-6 py-3 border-b border-white/[0.06] text-xs text-[var(--text-tertiary)] font-medium">
+            <div className="grid grid-cols-[2fr_1fr] md:grid-cols-[2fr_1fr_1.5fr_1.5fr] px-4 md:px-6 py-3 border-b border-white/[0.06] text-xs text-[var(--text-tertiary)] font-medium">
               <span>Asset</span>
-              <span className="text-center">APY</span>
-              <span className="text-center">Total Liquidity</span>
-              <span className="text-right">Pool</span>
+              <span className="text-right md:text-center">APY</span>
+              <span className="hidden md:block text-center">Total Liquidity</span>
+              <span className="hidden md:block text-right">Pool</span>
             </div>
             {[0, 1].map((i) => (
-              <div key={i} className="grid grid-cols-[2fr_1fr_1.5fr_1.5fr] items-center px-6 py-4 border-b border-white/[0.06] last:border-b-0">
+              <div key={i} className="grid grid-cols-[2fr_1fr] md:grid-cols-[2fr_1fr_1.5fr_1.5fr] items-center px-4 md:px-6 py-4 border-b border-white/[0.06] last:border-b-0">
                 <div className="flex items-center gap-3">
                   <div className="w-8 h-8 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
                   <div className="space-y-1.5">
@@ -777,13 +777,13 @@ export default function Home() {
                     <div className="h-3 w-14 bg-[var(--bg-tertiary)] rounded animate-pulse" />
                   </div>
                 </div>
-                <div className="flex justify-center">
+                <div className="flex justify-end md:justify-center">
                   <div className="h-4 w-12 bg-[var(--bg-tertiary)] rounded animate-pulse" />
                 </div>
-                <div className="flex justify-center">
+                <div className="hidden md:flex justify-center">
                   <div className="h-4 w-20 bg-[var(--bg-tertiary)] rounded animate-pulse" />
                 </div>
-                <div className="flex items-center justify-end gap-2">
+                <div className="hidden md:flex items-center justify-end gap-2">
                   <div className="flex -space-x-2">
                     <div className="w-7 h-7 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
                     <div className="w-7 h-7 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
@@ -817,7 +817,7 @@ export default function Home() {
         </h2>
 
         {/* Your loans / collateral card + expandable chart */}
-        <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl p-6">
+        <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl p-4 md:p-6">
           <div className="flex items-center gap-2 mb-1">
             <div
               ref={tabContainerRef}
@@ -866,11 +866,11 @@ export default function Home() {
             </button>
           </div>
 
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-end justify-between gap-2">
             {isDataLoading ? (
-              <div className="h-10 w-40 bg-[var(--bg-tertiary)] rounded-lg animate-pulse" />
+              <div className="h-8 md:h-10 w-40 bg-[var(--bg-tertiary)] rounded-lg animate-pulse" />
             ) : (
-              <div ref={borrowBalanceRef} className="text-4xl font-bold text-[var(--text-primary)]">
+              <div ref={borrowBalanceRef} className="text-2xl md:text-4xl font-bold text-[var(--text-primary)]">
                 {(isConnected && userPositions
                   ? borrowTab === "loans"
                     ? formatUsd(totalLoanUsd)
@@ -941,14 +941,14 @@ export default function Home() {
         {/* Position table — always visible */}
         {isDataLoading ? (
           <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl overflow-hidden">
-            <div className="hidden md:grid grid-cols-[2fr_1fr_1.5fr_1.5fr] px-6 py-3 border-b border-white/[0.06] text-xs text-[var(--text-tertiary)] font-medium">
+            <div className="hidden md:grid grid-cols-[2fr_1fr_1.5fr_1.5fr] px-4 md:px-6 py-3 border-b border-white/[0.06] text-xs text-[var(--text-tertiary)] font-medium">
               <span>Collateral</span>
               <span className="text-center">Loan</span>
               <span className="text-center">Rate</span>
               <span className="text-right">Health</span>
             </div>
             {[0, 1].map((i) => (
-              <div key={i} className="grid md:grid-cols-[2fr_1fr_1.5fr_1.5fr] items-center px-6 py-4 border-b border-white/[0.06] last:border-b-0">
+              <div key={i} className="grid md:grid-cols-[2fr_1fr_1.5fr_1.5fr] items-center px-4 md:px-6 py-4 border-b border-white/[0.06] last:border-b-0">
                 <div className="flex items-center gap-1.5">
                   <div className="w-5.5 h-5.5 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
                   <div className="h-4 w-24 bg-[var(--bg-tertiary)] rounded animate-pulse" />
@@ -971,7 +971,7 @@ export default function Home() {
         ) : isConnected && hasPositions ? (
           <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl overflow-hidden">
             {/* Table header */}
-            <div className="hidden md:grid grid-cols-[2fr_1fr_1.5fr_1.5fr] px-6 py-3 border-b border-white/[0.06] text-xs text-[var(--text-tertiary)] font-medium">
+            <div className="hidden md:grid grid-cols-[2fr_1fr_1.5fr_1.5fr] px-4 md:px-6 py-3 border-b border-white/[0.06] text-xs text-[var(--text-tertiary)] font-medium">
               <span>Collateral</span>
               <span className="text-center">Loan</span>
               <span className="text-center">Rate</span>
@@ -988,10 +988,11 @@ export default function Home() {
                 <Link
                   key={row.pool.poolAddress}
                   href={`/borrow/${row.pool.poolAddress}`}
-                  className="grid md:grid-cols-[2fr_1fr_1.5fr_1.5fr] items-center px-6 py-4 border-b border-white/[0.06] last:border-b-0 hover:bg-white/[0.05] transition-colors cursor-pointer"
+                  className="grid md:grid-cols-[2fr_1fr_1.5fr_1.5fr] items-center px-4 md:px-6 py-4 border-b border-white/[0.06] last:border-b-0 hover:bg-white/[0.05] transition-colors cursor-pointer"
                 >
                   {/* Collateral */}
                   <div className="flex flex-col gap-1.5">
+                    <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider md:hidden">Collateral</span>
                     {row.collaterals.map((c, i) => (
                       <div key={i} className="flex items-center gap-1.5">
                         <TokenIcon symbol={c.tokenSymbol} color={c.tokenColor} size={22} />
@@ -1009,7 +1010,8 @@ export default function Home() {
                   </div>
 
                   {/* Loan */}
-                  <div className="flex flex-col gap-1.5 items-center">
+                  <div className="flex flex-col gap-1.5 md:items-center">
+                    <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider md:hidden">Loan</span>
                     {row.borrowAmount > 0n ? (
                       <div className="flex items-center gap-1.5">
                         <TokenIcon symbol={row.pool.borrowSymbol} color={getTokenColor(row.pool.borrowSymbol)} size={22} />
@@ -1025,18 +1027,20 @@ export default function Home() {
                     )}
                   </div>
 
-                  {/* Rate */}
-                  <div className="text-center">
-                    <span className="text-sm font-medium text-[var(--text-primary)]">
-                      {row.pool.borrowApy.toFixed(2)}%
-                    </span>
-                  </div>
-
-                  {/* Health */}
-                  <div className="text-right">
-                    <span className={`text-sm font-medium ${healthColor}`}>
-                      {healthStr}
-                    </span>
+                  {/* Rate + Health — inline on mobile */}
+                  <div className="flex items-center gap-4 md:contents">
+                    <div className="md:text-center">
+                      <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider md:hidden block mb-0.5">Rate</span>
+                      <span className="text-sm font-medium text-[var(--text-primary)]">
+                        {row.pool.borrowApy.toFixed(2)}%
+                      </span>
+                    </div>
+                    <div className="md:text-right">
+                      <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider md:hidden block mb-0.5">Health</span>
+                      <span className={`text-sm font-medium ${healthColor}`}>
+                        {healthStr}
+                      </span>
+                    </div>
                   </div>
                 </Link>
               );
@@ -1065,33 +1069,31 @@ export default function Home() {
           </h2>
 
           <div className="space-y-4">
-            <div className="flex items-center justify-between flex-wrap gap-2">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                {(["all", "deposit", "withdraw", "borrow", "repay", "supply-collateral", "withdraw-collateral"] as const).map((f) => (
-                  <button
-                    key={f}
-                    onClick={() => setActivityFilter(f)}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
-                      activityFilter === f
-                        ? "bg-white/[0.1] text-[var(--text-primary)]"
-                        : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:bg-white/[0.04]"
-                    }`}
-                  >
-                    {f === "all" ? "All"
-                      : f === "deposit" ? "Deposits"
-                      : f === "withdraw" ? "Withdrawals"
-                      : f === "borrow" ? "Borrows"
-                      : f === "repay" ? "Repays"
-                      : f === "supply-collateral" ? "Supply Collateral"
-                      : "Withdraw Collateral"}
-                  </button>
-                ))}
-              </div>
+            <div className="grid grid-cols-4 md:flex md:items-center gap-1.5">
+              {(["all", "deposit", "withdraw", "borrow", "repay", "supply-collateral", "withdraw-collateral"] as const).map((f) => (
+                <button
+                  key={f}
+                  onClick={() => setActivityFilter(f)}
+                  className={`px-2 md:px-3 py-1.5 text-[11px] md:text-xs font-medium rounded-lg transition-colors cursor-pointer text-center ${
+                    activityFilter === f
+                      ? "bg-white/[0.1] text-[var(--text-primary)]"
+                      : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:bg-white/[0.04]"
+                  }`}
+                >
+                  {f === "all" ? "All"
+                    : f === "deposit" ? "Deposits"
+                    : f === "withdraw" ? "Withdraws"
+                    : f === "borrow" ? "Borrows"
+                    : f === "repay" ? "Repays"
+                    : f === "supply-collateral" ? "Supply Collateral"
+                    : "Withdraw Collateral"}
+                </button>
+              ))}
             </div>
 
             <div ref={activityTableRef} className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl overflow-hidden">
               {/* Header */}
-              <div className="grid grid-cols-[1.5fr_1.2fr_2fr_1.5fr_1.5fr] px-6 py-3 border-b border-white/[0.06] text-xs text-[var(--text-tertiary)] font-medium">
+              <div className="grid grid-cols-[1.2fr_1fr_1.5fr] md:grid-cols-[1.5fr_1.2fr_2fr_1.5fr_1.5fr] px-4 md:px-6 py-3 border-b border-white/[0.06] text-xs text-[var(--text-tertiary)] font-medium">
                 <span className="flex items-center gap-1">
                   Date
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
@@ -1099,20 +1101,20 @@ export default function Home() {
                   </svg>
                 </span>
                 <span>Type</span>
-                <span>Amount</span>
-                <span>Pool</span>
-                <span className="text-right">Transaction</span>
+                <span className="text-right md:text-left">Amount</span>
+                <span className="hidden md:block">Pool</span>
+                <span className="hidden md:block text-right">Transaction</span>
               </div>
 
               {/* Rows */}
               {isActivityLoading ? (
                 Array.from({ length: 5 }).map((_, i) => (
-                  <div key={i} className="grid grid-cols-[1.5fr_1.2fr_2fr_1.5fr_1.5fr] items-center px-6 py-4 border-b border-white/[0.06] last:border-b-0">
-                    <div className="h-4 w-32 rounded bg-[var(--bg-tertiary)] animate-pulse" />
-                    <div className="h-4 w-24 rounded bg-[var(--bg-tertiary)] animate-pulse" />
-                    <div className="h-4 w-36 rounded bg-[var(--bg-tertiary)] animate-pulse" />
-                    <div className="h-4 w-28 rounded bg-[var(--bg-tertiary)] animate-pulse" />
-                    <div className="h-4 w-28 rounded bg-[var(--bg-tertiary)] animate-pulse ml-auto" />
+                  <div key={i} className="grid grid-cols-[1.2fr_1fr_1.5fr] md:grid-cols-[1.5fr_1.2fr_2fr_1.5fr_1.5fr] items-center px-4 md:px-6 py-4 border-b border-white/[0.06] last:border-b-0">
+                    <div className="h-4 w-20 md:w-32 rounded bg-[var(--bg-tertiary)] animate-pulse" />
+                    <div className="h-4 w-14 md:w-24 rounded bg-[var(--bg-tertiary)] animate-pulse" />
+                    <div className="h-4 w-16 md:w-36 rounded bg-[var(--bg-tertiary)] animate-pulse ml-auto md:ml-0" />
+                    <div className="hidden md:block h-4 w-28 rounded bg-[var(--bg-tertiary)] animate-pulse" />
+                    <div className="hidden md:block h-4 w-28 rounded bg-[var(--bg-tertiary)] animate-pulse ml-auto" />
                   </div>
                 ))
               ) : paginatedActivity.length === 0 ? (
@@ -1144,13 +1146,15 @@ export default function Home() {
                       : amount.toFixed(2);
 
                   const date = new Date(tx.timestamp * 1000);
-                  const dateStr =
+                  const datePart =
                     date.getFullYear() +
                     "-" + String(date.getMonth() + 1).padStart(2, "0") +
-                    "-" + String(date.getDate()).padStart(2, "0") +
-                    " " + String(date.getHours()).padStart(2, "0") +
+                    "-" + String(date.getDate()).padStart(2, "0");
+                  const timePart =
+                    String(date.getHours()).padStart(2, "0") +
                     ":" + String(date.getMinutes()).padStart(2, "0") +
                     ":" + String(date.getSeconds()).padStart(2, "0");
+                  const dateStr = `${datePart} ${timePart}`;
 
                   const typeLabel =
                     tx.type === "deposit" ? "Deposit"
@@ -1163,29 +1167,36 @@ export default function Home() {
                   return (
                     <div
                       key={tx.id}
-                      className="activity-row grid grid-cols-[1.5fr_1.2fr_2fr_1.5fr_1.5fr] items-center px-6 py-4 border-b border-white/[0.06] last:border-b-0 hover:bg-white/[0.03] transition-colors"
+                      className="activity-row grid grid-cols-[1.2fr_1fr_1.5fr] md:grid-cols-[1.5fr_1.2fr_2fr_1.5fr_1.5fr] items-center px-4 md:px-6 py-3 md:py-4 border-b border-white/[0.06] last:border-b-0 hover:bg-white/[0.03] transition-colors"
                     >
                       {/* Date */}
-                      <span className="text-sm text-[var(--text-secondary)]">{dateStr}</span>
+                      <div className="text-xs md:text-sm text-[var(--text-secondary)]">
+                        <span className="hidden md:inline">{dateStr}</span>
+                        <span className="md:hidden">
+                          {datePart}
+                          <br />
+                          <span className="text-[10px] text-[var(--text-tertiary)]">{timePart}</span>
+                        </span>
+                      </div>
 
                       {/* Type */}
-                      <span className="text-sm text-[var(--text-primary)]">{typeLabel}</span>
+                      <span className="text-xs md:text-sm text-[var(--text-primary)]">{typeLabel}</span>
 
                       {/* Amount */}
-                      <div className="flex items-center gap-2">
-                        <TokenIcon symbol={symbol} color={getTokenColor(symbol)} size={20} />
-                        <span className="text-sm font-medium text-[var(--text-primary)]">
+                      <div className="flex items-center gap-1.5 md:gap-2 justify-end md:justify-start">
+                        <TokenIcon symbol={symbol} color={getTokenColor(symbol)} size={18} />
+                        <span className="text-xs md:text-sm font-medium text-[var(--text-primary)]">
                           {fmtAmount} {symbol}
                         </span>
                         {price > 0 && (
-                          <span className="text-[10px] text-[var(--text-tertiary)] bg-white/[0.06] px-1.5 py-0.5 rounded">
+                          <span className="hidden md:inline text-[10px] text-[var(--text-tertiary)] bg-white/[0.06] px-1.5 py-0.5 rounded">
                             {fmtUsd}
                           </span>
                         )}
                       </div>
 
                       {/* Pool */}
-                      <div className="flex items-center gap-2">
+                      <div className="hidden md:flex items-center gap-2">
                         <div className="relative w-9 h-5 flex-shrink-0">
                           <div className="absolute left-0 z-10">
                             <TokenIcon symbol={pool.collateralSymbol} color={getTokenColor(pool.collateralSymbol)} size={20} />
@@ -1200,7 +1211,7 @@ export default function Home() {
                       </div>
 
                       {/* Transaction */}
-                      <div className="flex items-center justify-end gap-1.5">
+                      <div className="hidden md:flex items-center justify-end gap-1.5">
                         <a
                           href={`${CHAIN.blockExplorers?.default.url}/tx/${tx.txHash}`}
                           target="_blank"
