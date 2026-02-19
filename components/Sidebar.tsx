@@ -260,7 +260,7 @@ export default function Sidebar() {
                 onClick={handleMobileNav}
                 className={`mobile-nav-item flex items-center gap-3 px-8 py-3.5 rounded-2xl text-base font-medium transition-colors ${
                   active
-                    ? "text-[var(--accent)] bg-[var(--accent-glow)] border border-[var(--accent-border)]"
+                    ? "text-white bg-[#016BE5]"
                     : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-white/[0.05]"
                 }`}
               >
@@ -314,7 +314,7 @@ export default function Sidebar() {
             {/* Floating active indicator */}
             <div
               ref={indicatorRef}
-              className="absolute left-0 right-0 rounded-full border border-[var(--accent)] bg-[var(--accent-glow)] pointer-events-none z-0"
+              className="absolute left-0 right-0 rounded-full bg-[#016BE5] pointer-events-none z-0"
               style={{ opacity: 0 }}
             />
 
@@ -329,7 +329,7 @@ export default function Sidebar() {
                       flex items-center gap-3 px-4 py-2.5 rounded-full text-sm font-medium transition-colors duration-150
                       ${
                         active
-                          ? "text-[var(--accent)]"
+                          ? "text-white"
                           : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]"
                       }
                     `}

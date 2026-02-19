@@ -73,6 +73,13 @@ interface PositionCollateral {
   usd: number;
 }
 
+interface RepayTokenOption {
+  address: `0x${string}`;
+  symbol: string;
+  decimals: number;
+  isCollateral: boolean;
+}
+
 function getTokenColor(symbol: string): string {
   return TOKEN_COLORS[symbol.toUpperCase()] ?? "#6366f1";
 }
@@ -132,6 +139,8 @@ export default function BorrowDetailPage() {
   const [ratePeriod, setRatePeriod] = useState<TimePeriod>("1M");
   const [btxFilter, setBtxFilter] = useState<BorrowTxFilter>("all");
   const [btxPage, setBtxPage] = useState(1);
+  const [repayToken, setRepayToken] = useState<RepayTokenOption | null>(null);
+  const [repayDropdownOpen, setRepayDropdownOpen] = useState(false);
 
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
@@ -143,6 +152,15 @@ export default function BorrowDetailPage() {
   const crossChainContentRef = useRef<HTMLDivElement>(null);
   const dropdownMenuRef = useRef<HTMLDivElement>(null);
   const prevDestChainRef = useRef<typeof destChain>(null);
+  const repayDropdownRef = useRef<HTMLDivElement>(null);
+  const repayDropdownMenuRef = useRef<HTMLDivElement>(null);
+  const repayBtnRef = useRef<HTMLButtonElement>(null);
+  const repayChevronRef = useRef<SVGSVGElement>(null);
+  const repayProjectionRef = useRef<HTMLDivElement>(null);
+  const repayLoanProjectRef = useRef<HTMLSpanElement>(null);
+  const repayHealthProjectRef = useRef<HTMLSpanElement>(null);
+  const prevRepayLoanStr = useRef("");
+  const prevRepayHealthStr = useRef("");
   const colModalBackdropRef = useRef<HTMLDivElement>(null);
   const colModalCardRef = useRef<HTMLDivElement>(null);
   const colModalContentRef = useRef<HTMLDivElement>(null);
@@ -495,6 +513,133 @@ export default function BorrowDetailPage() {
     return result > userBorrowAmount ? result - userBorrowAmount : 0n;
   })();
 
+  // ── Repay token options ──
+  const repayTokenOptions = useMemo<RepayTokenOption[]>(() => {
+    if (!borrowTokenAddr || !collateralTokenAddr) return [];
+    const options: RepayTokenOption[] = [
+      { address: borrowTokenAddr, symbol: borrowSymbol, decimals: borrowDecimals, isCollateral: false },
+      { address: collateralTokenAddr, symbol: collateralSymbol, decimals: collateralDecimals, isCollateral: true },
+    ];
+    for (const t of KNOWN_COLLATERAL_TOKENS) {
+      const addr = t.address.toLowerCase();
+      if (addr !== borrowTokenAddr.toLowerCase() && addr !== collateralTokenAddr.toLowerCase()) {
+        options.push({ address: t.address, symbol: t.symbol, decimals: t.decimals, isCollateral: false });
+      }
+    }
+    return options;
+  }, [borrowTokenAddr, collateralTokenAddr, borrowSymbol, collateralSymbol, borrowDecimals, collateralDecimals]);
+
+  // Auto-default repayToken to borrow token (first option)
+  useEffect(() => {
+    if (repayToken === null && repayTokenOptions.length > 0) {
+      setRepayToken(repayTokenOptions[0]);
+    }
+  }, [repayToken, repayTokenOptions]);
+
+  // Active repay token (fall back to borrow token when not explicitly selected)
+  const activeRepayToken = repayToken ?? (borrowTokenAddr ? { address: borrowTokenAddr, symbol: borrowSymbol, decimals: borrowDecimals, isCollateral: false } : null);
+  const isRepayWithBorrowToken = activeRepayToken?.address?.toLowerCase() === borrowTokenAddr?.toLowerCase();
+  const isRepayWithCollateral = activeRepayToken?.isCollateral ?? false;
+
+  // Tokens that are NOT borrow/collateral (need wallet balance reads)
+  const otherRepayTokens = useMemo(
+    () => repayTokenOptions.filter((t) => !t.isCollateral && t.address.toLowerCase() !== borrowTokenAddr?.toLowerCase()),
+    [repayTokenOptions, borrowTokenAddr],
+  );
+
+  // Read wallet balances for ALL other repay tokens at once
+  const { data: otherTokenBalances, refetch: refetchRepayToken } = useReadContracts({
+    contracts: otherRepayTokens.map((t) => ({
+      address: t.address,
+      abi: mockErc20Abi,
+      functionName: "balanceOf" as const,
+      args: [userAddress!],
+      chainId: CHAIN.id,
+    })),
+    query: {
+      enabled: otherRepayTokens.length > 0 && !!userAddress,
+      refetchInterval: 5_000,
+    },
+  });
+
+  // Map: token address (lowercase) → wallet balance
+  const otherTokenBalanceMap = useMemo(() => {
+    const map = new Map<string, bigint>();
+    otherRepayTokens.forEach((t, i) => {
+      const bal = otherTokenBalances?.[i]?.result as bigint | undefined;
+      map.set(t.address.toLowerCase(), bal ?? 0n);
+    });
+    return map;
+  }, [otherRepayTokens, otherTokenBalances]);
+
+  // Read prices for other repay tokens from TokenDataStream
+  const { data: otherTokenPrices } = useReadContracts({
+    contracts: otherRepayTokens.flatMap((t) => [
+      { address: tokenDataStreamAddr!, abi: tokenDataStreamAbi, functionName: "latestRoundData" as const, args: [t.address], chainId: CHAIN.id },
+      { address: tokenDataStreamAddr!, abi: tokenDataStreamAbi, functionName: "decimals" as const, args: [t.address], chainId: CHAIN.id },
+    ]),
+    query: {
+      enabled: otherRepayTokens.length > 0 && !!tokenDataStreamAddr,
+      refetchInterval: 10_000,
+    },
+  });
+
+  // Map: token address (lowercase) → { price: bigint, priceDec: number }
+  const otherTokenPriceMap = useMemo(() => {
+    const map = new Map<string, { price: bigint; priceDec: number }>();
+    otherRepayTokens.forEach((t, i) => {
+      const priceRaw = otherTokenPrices?.[i * 2]?.result as readonly [bigint, bigint, bigint, bigint, bigint] | undefined;
+      const priceDec = otherTokenPrices?.[i * 2 + 1]?.result as bigint | undefined;
+      if (priceRaw) {
+        map.set(t.address.toLowerCase(), { price: priceRaw[1], priceDec: Number(priceDec ?? 8n) });
+      }
+    });
+    return map;
+  }, [otherRepayTokens, otherTokenPrices]);
+
+  // Get price for any repay token
+  const getRepayTokenPrice = (opt: RepayTokenOption): { price: bigint; priceDec: number } => {
+    if (opt.address.toLowerCase() === borrowTokenAddr?.toLowerCase()) return { price: borrowPrice, priceDec: borrowPriceDec };
+    if (opt.address.toLowerCase() === collateralTokenAddr?.toLowerCase()) return { price: collateralPrice, priceDec: collateralPriceDec };
+    return otherTokenPriceMap.get(opt.address.toLowerCase()) ?? { price: 0n, priceDec: 8 };
+  };
+
+  const activeRepayPrice = activeRepayToken ? getRepayTokenPrice(activeRepayToken) : { price: 0n, priceDec: 8 };
+
+  // Read allowance only for the currently selected non-borrow, non-collateral token
+  const { data: repayAllowanceData } = useReadContracts({
+    contracts: [
+      { address: activeRepayToken?.address, abi: mockErc20Abi, functionName: "allowance", args: [userAddress!, lendingPoolAddr], chainId: CHAIN.id },
+    ],
+    query: {
+      enabled: !!activeRepayToken && !isRepayWithBorrowToken && !isRepayWithCollateral && !!userAddress,
+      refetchInterval: 5_000,
+    },
+  });
+
+  // Helper to get any token's balance for dropdown display
+  const getRepayTokenBalance = (opt: RepayTokenOption): bigint => {
+    if (opt.isCollateral) return positionCollateralBalance ?? 0n;
+    if (opt.address.toLowerCase() === borrowTokenAddr?.toLowerCase()) return walletBorrowBalance;
+    return otherTokenBalanceMap.get(opt.address.toLowerCase()) ?? 0n;
+  };
+
+  const repaySelectedBalance = activeRepayToken ? getRepayTokenBalance(activeRepayToken) : 0n;
+
+  const repaySelectedAllowance = isRepayWithBorrowToken
+    ? borrowTokenAllowance
+    : isRepayWithCollateral
+    ? maxUint256
+    : (repayAllowanceData?.[0]?.result as bigint) ?? 0n;
+
+  const repaySelectedDecimals = isRepayWithBorrowToken
+    ? borrowDecimals
+    : isRepayWithCollateral
+    ? collateralDecimals
+    : activeRepayToken?.decimals ?? 18;
+
+  const repaySelectedSymbol = activeRepayToken?.symbol ?? borrowSymbol;
+
   // ── Write hooks ──
   const { writeContract: writeApprove, data: approveTxHash, reset: resetApprove } = useWriteContract();
   const { writeContract: writeCollateral, data: collateralTxHash, reset: resetCollateral } = useWriteContract();
@@ -717,18 +862,32 @@ export default function BorrowDetailPage() {
 
   // ── Repay Loan ──
 
-  // Convert repay amount to borrow shares
+  // Convert repay input (in selected token denomination) to borrow token amount, then to shares
+  const repayInputUsd = useMemo(() => {
+    if (!repayLoanAmount || Number(repayLoanAmount) <= 0) return 0;
+    return Number(repayLoanAmount) * Number(formatUnits(activeRepayPrice.price, activeRepayPrice.priceDec));
+  }, [repayLoanAmount, activeRepayPrice]);
+
+  const repayBorrowEquivalent = useMemo(() => {
+    if (repayInputUsd <= 0 || borrowPrice === 0n) return 0n;
+    if (isRepayWithBorrowToken) {
+      try { return parseUnits(repayLoanAmount, borrowDecimals); } catch { return 0n; }
+    }
+    // Convert USD value to borrow token amount
+    const borrowPriceNum = Number(formatUnits(borrowPrice, borrowPriceDec));
+    if (borrowPriceNum === 0) return 0n;
+    const borrowTokenAmount = repayInputUsd / borrowPriceNum;
+    try { return parseUnits(borrowTokenAmount.toFixed(borrowDecimals), borrowDecimals); } catch { return 0n; }
+  }, [repayInputUsd, borrowPrice, borrowPriceDec, isRepayWithBorrowToken, repayLoanAmount, borrowDecimals]);
+
   const repaySharesFromAmount = useMemo(() => {
-    if (!repayLoanAmount || Number(repayLoanAmount) <= 0) return 0n;
+    if (repayBorrowEquivalent === 0n) return 0n;
     if (!totalBorrowShares || totalBorrowShares === 0n || !totalBorrowAssets || totalBorrowAssets === 0n) return 0n;
-    try {
-      const amount = parseUnits(repayLoanAmount, borrowDecimals);
-      return (amount * totalBorrowShares) / totalBorrowAssets;
-    } catch { return 0n; }
-  }, [repayLoanAmount, borrowDecimals, totalBorrowShares, totalBorrowAssets]);
+    return (repayBorrowEquivalent * totalBorrowShares) / totalBorrowAssets;
+  }, [repayBorrowEquivalent, totalBorrowShares, totalBorrowAssets]);
 
   const doRepayLoanTx = useCallback(() => {
-    if (!userAddress || !borrowTokenAddr || repaySharesFromAmount === 0n) return;
+    if (!userAddress || !activeRepayToken || repaySharesFromAmount === 0n) return;
     setRlTxStep("repaying");
     writeRepayLoan(
       {
@@ -737,10 +896,10 @@ export default function BorrowDetailPage() {
         functionName: "repayWithSelectedToken",
         args: [{
           v0: userAddress,
-          v1: borrowTokenAddr,
+          v1: activeRepayToken.address,
           v2: repaySharesFromAmount,
           v3: 0n,
-          v4: false,
+          v4: activeRepayToken.isCollateral,
           v5: 3000,
         }],
         chainId: CHAIN.id,
@@ -752,7 +911,7 @@ export default function BorrowDetailPage() {
         },
       }
     );
-  }, [userAddress, borrowTokenAddr, repaySharesFromAmount, lendingPoolAddr, writeRepayLoan]);
+  }, [userAddress, activeRepayToken, repaySharesFromAmount, lendingPoolAddr, writeRepayLoan]);
 
   // After repay approve confirmed → do repay tx
   useEffect(() => {
@@ -769,31 +928,40 @@ export default function BorrowDetailPage() {
       refetchCollateral();
       refetchBorrowShares();
       refetchAllCollaterals();
+      refetchRepayToken();
       queryClient.invalidateQueries({ queryKey: ["poolData"] });
       queryClient.invalidateQueries({ queryKey: ["userPositions"] });
-
     }
-  }, [repayLoanConfirmed, rlTxStep, refetchRouter, refetchUser, refetchCollateral, refetchBorrowShares, refetchAllCollaterals, queryClient]);
+  }, [repayLoanConfirmed, rlTxStep, refetchRouter, refetchUser, refetchCollateral, refetchBorrowShares, refetchAllCollaterals, refetchRepayToken, queryClient]);
 
   const handleRepayLoan = () => {
-    if (!userAddress || !borrowTokenAddr || !repayLoanAmount) return;
+    if (!userAddress || !activeRepayToken || !repayLoanAmount) return;
     setRlErrorMsg("");
-    const amount = parseUnits(repayLoanAmount, borrowDecimals);
-    if (amount <= 0n) return;
-    if (amount > walletBorrowBalance) {
-      setRlErrorMsg("Insufficient wallet balance");
+    if (repaySharesFromAmount === 0n) return;
+    // Check wallet balance for selected token
+    if (!isRepayWithCollateral) {
+      try {
+        const inputAmount = parseUnits(repayLoanAmount, repaySelectedDecimals);
+        if (inputAmount > repaySelectedBalance) {
+          setRlErrorMsg("Insufficient wallet balance");
+          return;
+        }
+      } catch { /* parsing error, let contract handle */ }
+    }
+    // Collateral doesn't need approval (already in position)
+    if (isRepayWithCollateral) {
+      doRepayLoanTx();
       return;
     }
-    if (amount > userBorrowAmount) {
-      setRlErrorMsg("Exceeds current loan amount");
-      return;
-    }
-    // Check allowance
-    if (borrowTokenAllowance < amount) {
+    // Check allowance for selected token
+    const approvalAmount = isRepayWithBorrowToken
+      ? repayBorrowEquivalent
+      : (() => { try { return parseUnits(repayLoanAmount, repaySelectedDecimals); } catch { return 0n; } })();
+    if (repaySelectedAllowance < approvalAmount) {
       setRlTxStep("approving");
       writeRepayApprove(
         {
-          address: borrowTokenAddr,
+          address: activeRepayToken.address,
           abi: mockErc20Abi,
           functionName: "approve",
           args: [lendingPoolAddr, maxUint256],
@@ -964,6 +1132,99 @@ export default function BorrowDetailPage() {
       );
     }
   }, [destChain]);
+
+  // GSAP: animate repay token dropdown open / close
+  useEffect(() => {
+    const menu = repayDropdownMenuRef.current;
+    const chevron = repayChevronRef.current;
+    if (!menu) return;
+    if (repayDropdownOpen) {
+      gsap.set(menu, { display: "block" });
+      const tl = gsap.timeline();
+      tl.fromTo(menu,
+        { opacity: 0, y: -10, scaleY: 0.9, transformOrigin: "top right" },
+        { opacity: 1, y: 0, scaleY: 1, duration: 0.3, ease: "back.out(1.7)" }
+      );
+      // Stagger in each item
+      const items = menu.querySelectorAll("button");
+      if (items.length) {
+        tl.fromTo(items,
+          { opacity: 0, x: 10 },
+          { opacity: 1, x: 0, duration: 0.2, stagger: 0.04, ease: "power2.out" },
+          "-=0.15"
+        );
+      }
+      if (chevron) gsap.to(chevron, { rotation: 180, duration: 0.3, ease: "power2.inOut" });
+    } else {
+      gsap.to(menu, {
+        opacity: 0, y: -8, scaleY: 0.9, duration: 0.2, ease: "power2.in",
+        onComplete: () => { gsap.set(menu, { display: "none" }); },
+      });
+      if (chevron) gsap.to(chevron, { rotation: 0, duration: 0.3, ease: "power2.inOut" });
+    }
+  }, [repayDropdownOpen]);
+
+  // GSAP: pulse button on token selection
+  useEffect(() => {
+    if (!repayToken || !repayBtnRef.current) return;
+    gsap.fromTo(repayBtnRef.current,
+      { scale: 0.9, borderColor: "rgba(1,107,229,0.5)" },
+      { scale: 1, borderColor: "rgba(255,255,255,0.06)", duration: 0.4, ease: "back.out(1.7)" }
+    );
+  }, [repayToken]);
+
+  // GSAP: digit-by-digit animation for projected Loan value
+  const repayLoanProjectionStr = useMemo(() => {
+    if (repayInputUsd <= 0) return "";
+    const newBorrowUsd = Math.max(0, borrowValueUsd - repayInputUsd);
+    return newBorrowUsd > 0
+      ? `$${newBorrowUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      : "$0.00";
+  }, [repayInputUsd, borrowValueUsd]);
+
+  useEffect(() => {
+    if (!repayLoanProjectRef.current || !repayLoanProjectionStr) return;
+    const chars = repayLoanProjectRef.current.querySelectorAll<HTMLElement>(".digit-char");
+    if (!chars.length) return;
+    if (repayLoanProjectionStr === prevRepayLoanStr.current) return;
+    prevRepayLoanStr.current = repayLoanProjectionStr;
+    gsap.fromTo(chars,
+      { opacity: 0, y: 12 },
+      { opacity: 1, y: 0, duration: 0.25, stagger: 0.03, ease: "power2.out" }
+    );
+  }, [repayLoanProjectionStr]);
+
+  // GSAP: digit-by-digit animation for projected Health Factor value
+  const repayHealthProjectionStr = useMemo(() => {
+    if (repayInputUsd <= 0) return "";
+    const newBorrowUsd = Math.max(0, borrowValueUsd - repayInputUsd);
+    const newHealth = newBorrowUsd > 0 ? collateralValueUsd / newBorrowUsd : Infinity;
+    return newHealth === Infinity ? "∞" : newHealth.toFixed(2);
+  }, [repayInputUsd, borrowValueUsd, collateralValueUsd]);
+
+  useEffect(() => {
+    if (!repayHealthProjectRef.current || !repayHealthProjectionStr) return;
+    const chars = repayHealthProjectRef.current.querySelectorAll<HTMLElement>(".digit-char");
+    if (!chars.length) return;
+    if (repayHealthProjectionStr === prevRepayHealthStr.current) return;
+    prevRepayHealthStr.current = repayHealthProjectionStr;
+    gsap.fromTo(chars,
+      { opacity: 0, y: 12 },
+      { opacity: 1, y: 0, duration: 0.25, stagger: 0.03, ease: "power2.out" }
+    );
+  }, [repayHealthProjectionStr]);
+
+  // Close repay dropdown on outside click
+  useEffect(() => {
+    if (!repayDropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (repayDropdownRef.current && !repayDropdownRef.current.contains(e.target as Node)) {
+        setRepayDropdownOpen(false);
+      }
+    };
+    const id = setTimeout(() => document.addEventListener("mousedown", handler), 0);
+    return () => { clearTimeout(id); document.removeEventListener("mousedown", handler); };
+  }, [repayDropdownOpen]);
 
   // Modal entrance animations
   useEffect(() => {
@@ -1620,7 +1881,7 @@ export default function BorrowDetailPage() {
                       : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
                   }`}
                 >
-                  {tab === "collateral" ? "Supply Collateral" : tab === "borrow" ? "Borrow" : "Repay"}
+                  {tab === "collateral" ? "Supply" : tab === "borrow" ? "Borrow" : "Repay"}
                 </button>
               ))}
             </div>
@@ -2013,12 +2274,66 @@ export default function BorrowDetailPage() {
                 ) : (
                   <>
                     {/* ── Repay Loan input card ── */}
-                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4">
+                    <div className="relative z-10 bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4">
                       <div className="flex items-center justify-between mb-3">
                         <span className="text-sm font-semibold text-[var(--text-primary)]">
-                          Repay Loan {borrowSymbol}
+                          Repay Loan
                         </span>
-                        <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={24} />
+                        {/* Token selector dropdown */}
+                        <div ref={repayDropdownRef} className="relative">
+                          <button
+                            ref={repayBtnRef}
+                            onClick={() => setRepayDropdownOpen((v) => !v)}
+                            disabled={rlTxStep !== "idle"}
+                            className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-white/[0.06] hover:border-white/[0.15] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            {(activeRepayToken?.symbol || borrowSymbol) ? (
+                              <TokenIcon symbol={activeRepayToken?.symbol || borrowSymbol} color={getTokenColor(activeRepayToken?.symbol || borrowSymbol)} size={20} />
+                            ) : (
+                              <div className="w-5 h-5 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
+                            )}
+                            <svg ref={repayChevronRef} width="12" height="12" viewBox="0 0 12 12" fill="none">
+                              <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--text-tertiary)]" />
+                            </svg>
+                          </button>
+                          {/* Dropdown menu (always mounted, hidden via GSAP) */}
+                          <div
+                            ref={repayDropdownMenuRef}
+                            style={{ display: "none" }}
+                            className="absolute right-0 top-full mt-1 w-56 bg-[rgba(12,16,32,0.95)] backdrop-blur-lg border border-white/[0.1] rounded-xl shadow-2xl overflow-hidden z-50"
+                          >
+                              {repayTokenOptions.map((opt) => {
+                                const isActive = activeRepayToken?.address?.toLowerCase() === opt.address.toLowerCase();
+                                const bal = getRepayTokenBalance(opt);
+                                return (
+                                  <button
+                                    key={opt.address}
+                                    onClick={() => {
+                                      setRepayToken(opt);
+                                      setRepayLoanAmount("");
+                                      setRepayDropdownOpen(false);
+                                    }}
+                                    className={`w-full flex items-center gap-3 px-3 py-2.5 transition-colors cursor-pointer ${
+                                      isActive ? "bg-[var(--accent-glow)] border-l-2 border-l-[var(--accent)]" : "hover:bg-white/[0.05] border-l-2 border-l-transparent"
+                                    }`}
+                                  >
+                                    <TokenIcon symbol={opt.symbol} color={getTokenColor(opt.symbol)} size={24} />
+                                    <div className="flex-1 text-left">
+                                      <div className="text-sm font-medium text-[var(--text-primary)]">
+                                        {opt.symbol}
+                                      </div>
+                                      <div className="text-xs text-[var(--text-tertiary)]">
+                                        {opt.isCollateral ? "Collateral" : "Wallet"}
+                                      </div>
+                                    </div>
+                                    <span className="text-xs text-[var(--text-secondary)]">
+                                      {fmt(bal, opt.decimals)}
+                                    </span>
+                                  </button>
+                                );
+                              })}
+                          </div>
+                        </div>
                       </div>
                       <input
                         type="text"
@@ -2033,17 +2348,17 @@ export default function BorrowDetailPage() {
                       />
                       <div className="flex items-center justify-between text-xs text-[var(--text-tertiary)]">
                         <span>
-                          {repayLoanAmount && Number(repayLoanAmount) > 0 && borrowPrice > 0n
-                            ? `$${(Number(repayLoanAmount) * Number(formatUnits(borrowPrice, borrowPriceDec))).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
-                            : "$0"}
+                          {repayInputUsd > 0
+                            ? `$${repayInputUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : "$0.00"}
                         </span>
                         <div className="flex items-center gap-2">
                           <span>
                             {isConnected && !isLoading
-                              ? `${fmt(walletBorrowBalance, borrowDecimals)} ${borrowSymbol}`
+                              ? `${fmt(repaySelectedBalance, repaySelectedDecimals)} ${repaySelectedSymbol}`
                               : "—"}
                           </span>
-                          {isConnected && !isLoading && userBorrowAmount > 0n && (
+                          {isConnected && !isLoading && isRepayWithBorrowToken && userBorrowAmount > 0n && (
                             <button
                               onClick={() => {
                                 const max = walletBorrowBalance < userBorrowAmount ? walletBorrowBalance : userBorrowAmount;
@@ -2104,7 +2419,10 @@ export default function BorrowDetailPage() {
                     </div>
 
                     {/* ── Combined info card ── */}
-                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4 space-y-3">
+                    {(() => {
+                      const hasRepayInput = repayInputUsd > 0;
+                      return (
+                    <div ref={repayProjectionRef} className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4 space-y-3">
                       <div className="flex items-center justify-between text-sm">
                         <div className="flex items-center gap-2">
                           <TokenIcon symbol={collateralSymbol} color={getTokenColor(collateralSymbol)} size={20} />
@@ -2119,21 +2437,47 @@ export default function BorrowDetailPage() {
                           <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={20} />
                           <span className="text-[var(--text-secondary)]">Loan ({borrowSymbol})</span>
                         </div>
-                        <span className="text-[var(--text-primary)] font-medium">
-                          {fmt(userBorrowAmount, borrowDecimals)}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-[var(--text-primary)] font-medium">
+                            {fmt(userBorrowAmount, borrowDecimals)}
+                          </span>
+                          {hasRepayInput && (
+                            <span className="flex items-center gap-1.5">
+                              <span className="text-[var(--text-tertiary)]">&rarr;</span>
+                              <span ref={repayLoanProjectRef} className="text-[var(--success)] font-medium">
+                                {repayLoanProjectionStr.split("").map((ch, i) => (
+                                  <span key={`${ch}-${i}`} className="digit-char inline-block">{ch}</span>
+                                ))}
+                              </span>
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-center justify-between text-sm">
-                        <span className="text-[var(--text-secondary)]">LTV</span>
-                        <span className="text-[var(--text-primary)]">
-                          {collateralValueUsd > 0 ? ((borrowValueUsd / collateralValueUsd) * 100).toFixed(2) : "0.00"}%
-                        </span>
+                        <span className="text-[var(--text-secondary)]">Health Factor</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className={`font-medium ${healthFactor < 1.2 ? "text-[var(--danger)]" : healthFactor < 2 ? "text-[var(--warning)]" : "text-[var(--text-primary)]"}`}>
+                            {healthFactor === Infinity ? "∞" : healthFactor.toFixed(2)}
+                          </span>
+                          {hasRepayInput && (
+                            <span className="flex items-center gap-1.5">
+                              <span className="text-[var(--text-tertiary)]">&rarr;</span>
+                              <span ref={repayHealthProjectRef} className="text-[var(--success)] font-medium">
+                                {repayHealthProjectionStr.split("").map((ch, i) => (
+                                  <span key={`${ch}-${i}`} className="digit-char inline-block">{ch}</span>
+                                ))}
+                              </span>
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className="flex items-center justify-between text-sm">
                         <span className="text-[var(--text-secondary)]">Rate</span>
                         <span className="text-[var(--text-primary)]">{borrowApy.toFixed(2)}%</span>
                       </div>
                     </div>
+                      );
+                    })()}
 
                     {/* Errors */}
                     {rlErrorMsg && (

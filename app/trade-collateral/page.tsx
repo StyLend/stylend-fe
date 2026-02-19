@@ -812,7 +812,7 @@ export default function TradeCollateralPage() {
                   {({ openConnectModal }) => (
                     <button
                       onClick={openConnectModal}
-                      className="w-full py-3.5 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                      className="w-full py-3.5 rounded-xl bg-[#016BE5] hover:bg-[#3B8EED] text-white font-semibold text-sm transition-colors cursor-pointer"
                     >
                       Connect Wallet
                     </button>

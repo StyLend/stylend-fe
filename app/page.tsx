@@ -802,7 +802,7 @@ export default function Home() {
             </p>
             <Link
               href="/earn"
-              className="inline-block px-5 py-2.5 rounded-lg bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] text-sm font-semibold transition-colors"
+              className="inline-block px-5 py-2.5 rounded-lg bg-[#016BE5] hover:bg-[#3B8EED] text-white text-sm font-semibold transition-colors"
             >
               Start Earning
             </Link>
@@ -1053,7 +1053,7 @@ export default function Home() {
             </p>
             <Link
               href="/borrow"
-              className="inline-block px-5 py-2.5 rounded-lg bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] text-sm font-semibold transition-colors"
+              className="inline-block px-5 py-2.5 rounded-lg bg-[#016BE5] hover:bg-[#3B8EED] text-white text-sm font-semibold transition-colors"
             >
               Start Borrowing
             </Link>
