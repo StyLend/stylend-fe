@@ -21,7 +21,8 @@ import { lendingPoolRouterAbi } from "@/lib/abis/lending-pool-router-abi";
 import { lendingPoolFactoryAbi } from "@/lib/abis/lending-pool-factory-abi";
 import { tokenDataStreamAbi } from "@/lib/abis/token-data-stream-abi";
 import { mockErc20Abi } from "@/lib/abis/mock-erc20-abi";
-import { CHAIN, LENDING_POOL_ADDRESSES } from "@/lib/contracts";
+import { CHAIN } from "@/lib/contracts";
+import { useLendingPools } from "@/hooks/useLendingPools";
 
 // ── Token definitions (from faucet) ──
 
@@ -33,8 +34,6 @@ const TOKENS = [
 ];
 
 type TokenInfo = (typeof TOKENS)[number];
-
-const ALL_POOLS: Address[] = [...(LENDING_POOL_ADDRESSES as readonly Address[])];
 
 const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
@@ -67,6 +66,8 @@ export default function TradeCollateralPage() {
   const confirmCardRef = useRef<HTMLDivElement>(null);
   const { address: userAddress, isConnected } = useAccount();
   const queryClient = useQueryClient();
+  const { data: poolAddresses } = useLendingPools();
+  const ALL_POOLS: Address[] = (poolAddresses ?? []) as Address[];
 
   // ── UI state ──
   const [tokenIn, setTokenIn] = useState<TokenInfo>(TOKENS[0]);

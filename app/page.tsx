@@ -11,12 +11,13 @@ import { lendingPoolRouterAbi } from "@/lib/abis/lending-pool-router-abi";
 import { lendingPoolFactoryAbi } from "@/lib/abis/lending-pool-factory-abi";
 import { tokenDataStreamAbi } from "@/lib/abis/token-data-stream-abi";
 import { mockErc20Abi } from "@/lib/abis/mock-erc20-abi";
-import { usePoolData, type PoolData } from "@/hooks/usePoolData";
-import { LENDING_POOL_ADDRESSES, CHAIN } from "@/lib/contracts";
+import { useAllPoolsData, type PoolData } from "@/hooks/usePoolData";
+import { useLendingPools } from "@/hooks/useLendingPools";
+import { CHAIN } from "@/lib/contracts";
 import { gsap } from "@/hooks/useGsap";
 import PoolAreaChart from "@/components/charts/PoolAreaChart";
 import TimePeriodSelect, { type TimePeriod, filterByTimePeriod } from "@/components/charts/TimePeriodSelect";
-import { usePoolSnapshots } from "@/hooks/usePoolSnapshots";
+import { useAggregatedSnapshots, type PoolCollateralInfo } from "@/hooks/useAggregatedSnapshots";
 
 const TOKEN_COLORS: Record<string, string> = {
   ETH: "#627eea", WETH: "#627eea", WBTC: "#f7931a", USDC: "#2775ca",
@@ -80,11 +81,11 @@ interface UserPositions {
 }
 
 function useUserPositions(
-  pools: (PoolData | undefined)[],
+  pools: PoolData[],
   userAddress: `0x${string}` | undefined
 ) {
   const client = usePublicClient({ chainId: CHAIN.id });
-  const loadedPools = pools.filter(Boolean) as PoolData[];
+  const loadedPools = pools;
 
   return useQuery<UserPositions>({
     queryKey: [
@@ -370,25 +371,35 @@ export default function Home() {
     queryClient.refetchQueries({ queryKey: ["userPositions"] });
   }, [queryClient]);
 
-  // Fetch all pool data
-  const pool0 = usePoolData(LENDING_POOL_ADDRESSES[0]);
-  const pool1 = usePoolData(LENDING_POOL_ADDRESSES[1]);
-  const loadedPools = [pool0.data, pool1.data];
+  // Fetch all pool addresses from indexer, then all pool data
+  const { data: poolAddresses } = useLendingPools();
+  const { data: allPoolsData, isLoading: isLoadingPools } = useAllPoolsData(poolAddresses);
+  const loadedPools = allPoolsData ?? [];
 
   // Fetch user positions across all pools
   const { data: userPositions, isLoading: isLoadingPositions } = useUserPositions(loadedPools, address);
 
-  // ── Chart data (use first pool's router for snapshots) ──
-  const firstPool = loadedPools.find(Boolean);
-  const { data: snapshotData } = usePoolSnapshots(
-    firstPool?.routerAddress,
-    firstPool?.borrowDecimals ?? 18,
-    firstPool?.collateralDecimals ?? 18,
-    !!firstPool,
+  // ── Collateral info per pool (for chart events matching) ──
+  const collateralInfos = useMemo<PoolCollateralInfo[] | undefined>(() => {
+    if (!loadedPools || loadedPools.length === 0) return undefined;
+    return loadedPools.map((pool) => ({
+      poolAddress: pool.poolAddress,
+      routerAddress: pool.routerAddress,
+      collateralDecimals: pool.collateralDecimals,
+      collateralPrice: Number(formatUnits(pool.collateralPrice, pool.collateralPriceDecimals)),
+    }));
+  }, [loadedPools]);
+
+  // ── Chart data (aggregated across all user pools) ──
+  const { data: aggregatedSnapshots } = useAggregatedSnapshots(
+    userPositions?.deposits,
+    userPositions?.loans,
+    collateralInfos,
+    address,
   );
   const depositChartData = useMemo(
-    () => (snapshotData ? filterByTimePeriod(snapshotData, depositPeriod) : []),
-    [snapshotData, depositPeriod],
+    () => (aggregatedSnapshots?.depositChart ? filterByTimePeriod(aggregatedSnapshots.depositChart, depositPeriod) : []),
+    [aggregatedSnapshots, depositPeriod],
   );
 
   // ── Expand/collapse deposit chart ──
@@ -415,8 +426,12 @@ export default function Home() {
 
   // ── Expand/collapse borrow chart ──
   const borrowChartData = useMemo(
-    () => (snapshotData ? filterByTimePeriod(snapshotData, borrowPeriod) : []),
-    [snapshotData, borrowPeriod],
+    () => (aggregatedSnapshots?.borrowChart ? filterByTimePeriod(aggregatedSnapshots.borrowChart, borrowPeriod) : []),
+    [aggregatedSnapshots, borrowPeriod],
+  );
+  const collateralChartData = useMemo(
+    () => (aggregatedSnapshots?.collateralChart ? filterByTimePeriod(aggregatedSnapshots.collateralChart, borrowPeriod) : []),
+    [aggregatedSnapshots, borrowPeriod],
   );
 
   const toggleBorrowChart = useCallback(() => {
@@ -578,9 +593,7 @@ export default function Home() {
   }, [userPositions]);
 
   // Loading state: connected but data not yet fetched
-  // Only check pools that actually exist in LENDING_POOL_ADDRESSES
-  const poolsLoading = loadedPools.filter(Boolean).length < LENDING_POOL_ADDRESSES.length;
-  const isDataLoading = isConnected && (poolsLoading || isLoadingPositions);
+  const isDataLoading = isConnected && (isLoadingPools || !allPoolsData || isLoadingPositions);
 
   return (
     <div className="space-y-12">
@@ -811,9 +824,9 @@ export default function Home() {
             <div ref={borrowChartRef} className="mt-4 grid grid-cols-1 md:grid-cols-[1fr_220px] gap-4">
               {/* Chart */}
               <div>
-                {borrowChartData.length > 0 ? (
+                {(borrowTab === "collateral" ? collateralChartData : borrowChartData).length > 0 ? (
                   <PoolAreaChart
-                    data={borrowChartData}
+                    data={borrowTab === "collateral" ? collateralChartData : borrowChartData}
                     dataKey={borrowTab === "collateral" ? "totalCollateral" : "totalBorrows"}
                     gradientId={`dashBorrow${borrowTab}Gradient`}
                     formatValue={(v) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}

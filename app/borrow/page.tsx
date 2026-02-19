@@ -5,7 +5,7 @@ import Link from "next/link";
 import { formatUnits } from "viem";
 import TokenIcon from "@/components/TokenIcon";
 import { usePoolData } from "@/hooks/usePoolData";
-import { LENDING_POOL_ADDRESSES } from "@/lib/contracts";
+import { useLendingPools } from "@/hooks/useLendingPools";
 import { gsap } from "@/hooks/useGsap";
 
 const TOKEN_COLORS: Record<string, string> = {
@@ -113,6 +113,7 @@ function PoolRow({ poolAddress }: { poolAddress: `0x${string}` }) {
 
 export default function BorrowPage() {
   const cardRef = useRef<HTMLDivElement>(null);
+  const { data: poolAddresses, isLoading: isLoadingPools } = useLendingPools();
 
   useEffect(() => {
     const tl = gsap.timeline({ delay: 0.2 });
@@ -137,7 +138,10 @@ export default function BorrowPage() {
         </div>
 
         {/* Rows — one per pool address */}
-        {LENDING_POOL_ADDRESSES.map((addr) => (
+        {isLoadingPools && (
+          <div className="px-6 py-8 text-center text-sm text-[var(--text-tertiary)]">Loading pools...</div>
+        )}
+        {poolAddresses?.map((addr) => (
           <PoolRow key={addr} poolAddress={addr} />
         ))}
       </div>

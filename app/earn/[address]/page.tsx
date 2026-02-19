@@ -23,8 +23,10 @@ import { lendingPoolRouterAbi } from "@/lib/abis/lending-pool-router-abi";
 import { lendingPoolFactoryAbi } from "@/lib/abis/lending-pool-factory-abi";
 import { interestRateModelAbi } from "@/lib/abis/interest-rate-model-abi";
 import { mockErc20Abi } from "@/lib/abis/mock-erc20-abi";
+import { tokenDataStreamAbi } from "@/lib/abis/token-data-stream-abi";
 import { CHAIN } from "@/lib/contracts";
 import { gsap } from "@/hooks/useGsap";
+import { usePoolTransactions, type TxFilter } from "@/hooks/usePoolTransactions";
 
 const TOKEN_COLORS: Record<string, string> = {
   ETH: "#627eea", WETH: "#627eea", WBTC: "#f7931a", USDC: "#2775ca",
@@ -46,6 +48,26 @@ function fmt(value: bigint, decimals: number): string {
 
 function shortenAddr(addr: string): string {
   return `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+}
+
+function addressToGradient(addr: string): string {
+  let h = 0;
+  for (let i = 0; i < addr.length; i++) h = addr.charCodeAt(i) + ((h << 5) - h);
+  const h1 = Math.abs(h) % 360;
+  const h2 = (h1 + 40) % 360;
+  return `linear-gradient(135deg, hsl(${h1},70%,55%), hsl(${h2},80%,45%))`;
+}
+
+function fmtChartDate(ts: number, spanDays: number): string {
+  const d = new Date(ts * 1000);
+  if (spanDays <= 7) {
+    return (
+      d.toLocaleDateString("en-US", { day: "numeric", month: "short" }) +
+      " " +
+      d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })
+    );
+  }
+  return d.toLocaleDateString("en-US", { day: "numeric", month: "short" });
 }
 
 function Skeleton({ className }: { className?: string }) {
@@ -72,15 +94,20 @@ export default function EarnDetailPage() {
   const [showWithdrawModal, setShowWithdrawModal] = useState(false);
   const [needsApproval, setNeedsApproval] = useState(false);
   const [wNeedsApproval, setWNeedsApproval] = useState(false);
+  const [txFilter, setTxFilter] = useState<TxFilter>("all");
+  const [txPage, setTxPage] = useState(1);
 
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
+  const txTableRef = useRef<HTMLDivElement>(null);
   const depositBackdropRef = useRef<HTMLDivElement>(null);
   const depositCardRef = useRef<HTMLDivElement>(null);
   const depositContentRef = useRef<HTMLDivElement>(null);
   const withdrawBackdropRef = useRef<HTMLDivElement>(null);
   const withdrawCardRef = useRef<HTMLDivElement>(null);
   const withdrawContentRef = useRef<HTMLDivElement>(null);
+  const sidebarContentRef = useRef<HTMLDivElement>(null);
+  const prevSidebarTab = useRef(sidebarTab);
 
   // ── Contract reads ──
 
@@ -161,6 +188,33 @@ export default function EarnDetailPage() {
   const collateralName = (collateralInfo?.[1]?.result as string) ?? "";
   const isLoading = !borrowSymbol;
 
+  // Token price from TokenDataStream
+  const { data: tokenDataStreamAddr } = useReadContract({
+    address: factoryAddr,
+    abi: lendingPoolFactoryAbi,
+    functionName: "tokenDataStream",
+    chainId: CHAIN.id,
+    query: { enabled: !!factoryAddr },
+  });
+
+  const { data: borrowPriceData } = useReadContracts({
+    contracts: [
+      { address: tokenDataStreamAddr as `0x${string}`, abi: tokenDataStreamAbi, functionName: "latestRoundData", args: [borrowTokenAddr!], chainId: CHAIN.id },
+      { address: tokenDataStreamAddr as `0x${string}`, abi: tokenDataStreamAbi, functionName: "decimals", args: [borrowTokenAddr!], chainId: CHAIN.id },
+    ],
+    query: { enabled: !!tokenDataStreamAddr && !!borrowTokenAddr },
+  });
+
+  const borrowPrice = useMemo(() => {
+    const priceRound = borrowPriceData?.[0]?.result as readonly [bigint, bigint, bigint, bigint, bigint] | undefined;
+    const priceDec = borrowPriceData?.[1]?.result as bigint | undefined;
+    if (!priceRound || !priceDec) return 1; // fallback to 1 for stablecoins
+    return Number(formatUnits(priceRound[1], Number(priceDec)));
+  }, [borrowPriceData]);
+
+  // Pool transactions
+  const { data: allTransactions, isLoading: txLoading } = usePoolTransactions(lendingPoolAddr);
+
   // User balances
   const { data: userData, refetch: refetchUser } = useReadContracts({
     contracts: [
@@ -216,6 +270,21 @@ export default function EarnDetailPage() {
     () => (snapshotData ? filterByTimePeriod(snapshotData, apyPeriod) : []),
     [snapshotData, apyPeriod],
   );
+
+  // ── Transactions pagination ──
+  const TX_PER_PAGE = 10;
+  const filteredTx = useMemo(() => {
+    if (!allTransactions) return [];
+    if (txFilter === "all") return allTransactions;
+    return allTransactions.filter((t) => t.type === txFilter);
+  }, [allTransactions, txFilter]);
+  const txTotalPages = Math.max(1, Math.ceil(filteredTx.length / TX_PER_PAGE));
+  const paginatedTx = useMemo(
+    () => filteredTx.slice((txPage - 1) * TX_PER_PAGE, txPage * TX_PER_PAGE),
+    [filteredTx, txPage],
+  );
+  // Reset page when filter changes
+  useEffect(() => { setTxPage(1); }, [txFilter]);
 
   // ── Write hooks ──
   const { writeContract: writeApprove, data: approveTxHash, reset: resetApprove } = useWriteContract();
@@ -465,6 +534,47 @@ export default function EarnDetailPage() {
     }
   }, [wTxStep, showWithdrawModal]);
 
+  // Animate transaction rows on page/filter change
+  useEffect(() => {
+    if (!txTableRef.current || paginatedTx.length === 0) return;
+    const rows = txTableRef.current.querySelectorAll<HTMLElement>(".tx-row");
+    if (!rows.length) return;
+    gsap.fromTo(
+      rows,
+      { opacity: 0, y: 14 },
+      { opacity: 1, y: 0, duration: 0.35, stagger: 0.04, ease: "power3.out" },
+    );
+  }, [paginatedTx, txFilter, txPage]);
+
+  // Sidebar deposit/withdraw tab switch animation
+  useEffect(() => {
+    if (isLoading) return;
+    const el = sidebarContentRef.current;
+    if (!el) return;
+    // Skip initial mount
+    if (prevSidebarTab.current === sidebarTab) return;
+    const goingRight = sidebarTab === "withdraw";
+    prevSidebarTab.current = sidebarTab;
+
+    const children = el.children;
+    if (!children.length) return;
+
+    const tl = gsap.timeline();
+    tl.fromTo(
+      el,
+      { opacity: 0, x: goingRight ? 40 : -40 },
+      { opacity: 1, x: 0, duration: 0.4, ease: "power3.out" },
+    );
+    tl.fromTo(
+      children,
+      { opacity: 0, y: 18 },
+      { opacity: 1, y: 0, duration: 0.35, stagger: 0.06, ease: "power3.out" },
+      "-=0.2",
+    );
+
+    return () => { tl.kill(); };
+  }, [sidebarTab, isLoading]);
+
   return (
     <div className="space-y-4">
       {/* Back link */}
@@ -571,9 +681,13 @@ export default function EarnDetailPage() {
                   <span className="text-xs text-[var(--text-tertiary)]">APY</span>
                   <TimePeriodSelect value={apyPeriod} onChange={setApyPeriod} />
                 </div>
-                <div className="text-3xl font-bold text-[var(--accent)] mb-4">
-                  {supplyApy.toFixed(2)}<span className="text-xl">%</span>
-                </div>
+                {isLoading ? (
+                  <Skeleton className="h-9 w-32 mb-4" />
+                ) : (
+                  <div className="text-3xl font-bold text-[var(--accent)] mb-4">
+                    {supplyApy.toFixed(2)}<span className="text-xl">%</span>
+                  </div>
+                )}
                 <div className="grid grid-cols-1 md:grid-cols-[1fr_180px] gap-4">
                   <div>
                     {snapshotsLoading ? (
@@ -593,13 +707,20 @@ export default function EarnDetailPage() {
                     )}
                   </div>
                   <div className="space-y-3 md:border-l md:border-white/[0.06] md:pl-4">
-                    <div className="flex items-center justify-between md:block">
-                      <div className="flex items-center gap-2 mb-0.5">
-                        <div className="w-3 h-3 rounded-sm bg-[var(--accent)]" />
-                        <span className="text-xs text-[var(--text-tertiary)]">APY</span>
+                    {isLoading ? (
+                      <div className="space-y-2">
+                        <Skeleton className="h-3 w-16" />
+                        <Skeleton className="h-4 w-20" />
                       </div>
-                      <span className="text-sm font-medium text-[var(--text-primary)]">{supplyApy.toFixed(2)}%</span>
-                    </div>
+                    ) : (
+                      <div className="flex items-center justify-between md:block">
+                        <div className="flex items-center gap-2 mb-0.5">
+                          <div className="w-3 h-3 rounded-sm bg-[var(--accent)]" />
+                          <span className="text-xs text-[var(--text-tertiary)]">APY</span>
+                        </div>
+                        <span className="text-sm font-medium text-[var(--text-primary)]">{supplyApy.toFixed(2)}%</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -643,6 +764,164 @@ export default function EarnDetailPage() {
                       </DetailRow>
                     )}
 
+                  </div>
+                )}
+              </div>
+
+              {/* All transactions */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg font-semibold text-[var(--text-primary)]">All transactions</h3>
+                  <div className="flex items-center gap-2">
+                    {(["all", "deposit", "withdraw"] as const).map((f) => (
+                      <button
+                        key={f}
+                        onClick={() => setTxFilter(f)}
+                        className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
+                          txFilter === f
+                            ? "bg-white/[0.1] text-[var(--text-primary)]"
+                            : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:bg-white/[0.04]"
+                        }`}
+                      >
+                        {f === "all" ? "All" : f === "deposit" ? "Deposits" : "Withdrawals"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div ref={txTableRef} className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl overflow-hidden">
+                  {/* Header */}
+                  <div className="grid grid-cols-[1.5fr_1fr_2fr_1.5fr_1.5fr] px-6 py-3 border-b border-white/[0.06] text-xs text-[var(--text-tertiary)] font-medium">
+                    <span className="flex items-center gap-1">
+                      Date
+                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                        <path d="M5 7L2 4h6L5 7z" fill="currentColor" />
+                      </svg>
+                    </span>
+                    <span>Type</span>
+                    <span>Amount</span>
+                    <span>User</span>
+                    <span className="text-right">Transaction</span>
+                  </div>
+
+                  {/* Rows */}
+                  {txLoading ? (
+                    Array.from({ length: 5 }).map((_, i) => (
+                      <div key={i} className="grid grid-cols-[1.5fr_1fr_2fr_1.5fr_1.5fr] items-center px-6 py-4 border-b border-white/[0.06] last:border-b-0">
+                        <Skeleton className="h-4 w-32" />
+                        <Skeleton className="h-4 w-24" />
+                        <Skeleton className="h-4 w-36" />
+                        <Skeleton className="h-4 w-28" />
+                        <Skeleton className="h-4 w-28 ml-auto" />
+                      </div>
+                    ))
+                  ) : paginatedTx.length === 0 ? (
+                    <div className="py-12 text-center text-sm text-[var(--text-tertiary)]">
+                      No transactions found
+                    </div>
+                  ) : (
+                    paginatedTx.map((tx) => {
+                      const amount = Number(formatUnits(BigInt(tx.amount), borrowDecimals));
+                      const usd = amount * borrowPrice;
+                      const fmtUsd = usd >= 1_000_000
+                        ? `$${(usd / 1_000_000).toFixed(2)}M`
+                        : usd >= 1_000
+                          ? `$${(usd / 1_000).toFixed(2)}k`
+                          : `$${usd.toFixed(2)}`;
+                      const fmtAmount = amount >= 1_000_000
+                        ? `${(amount / 1_000_000).toFixed(2)}M`
+                        : amount >= 1_000
+                          ? `${amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}`
+                          : amount.toFixed(2);
+
+                      const date = new Date(tx.timestamp * 1000);
+                      const dateStr =
+                        date.getFullYear() +
+                        "-" + String(date.getMonth() + 1).padStart(2, "0") +
+                        "-" + String(date.getDate()).padStart(2, "0") +
+                        " " + String(date.getHours()).padStart(2, "0") +
+                        ":" + String(date.getMinutes()).padStart(2, "0") +
+                        ":" + String(date.getSeconds()).padStart(2, "0");
+
+                      return (
+                        <div
+                          key={tx.id}
+                          className="tx-row grid grid-cols-[1.5fr_1fr_2fr_1.5fr_1.5fr] items-center px-6 py-4 border-b border-white/[0.06] last:border-b-0 hover:bg-white/[0.03] transition-colors"
+                        >
+                          {/* Date */}
+                          <span className="text-sm text-[var(--text-secondary)]">{dateStr}</span>
+
+                          {/* Type */}
+                          <span className="text-sm text-[var(--text-primary)]">
+                            {tx.type === "deposit" ? "Deposit" : "Withdraw"}
+                          </span>
+
+                          {/* Amount */}
+                          <div className="flex items-center gap-2">
+                            <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={20} />
+                            <span className="text-sm font-medium text-[var(--text-primary)]">
+                              {fmtAmount} {borrowSymbol}
+                            </span>
+                            <span className="text-[10px] text-[var(--text-tertiary)] bg-white/[0.06] px-1.5 py-0.5 rounded">
+                              {fmtUsd}
+                            </span>
+                          </div>
+
+                          {/* User */}
+                          <div className="flex items-center gap-2">
+                            <div
+                              className="w-5 h-5 rounded-full flex-shrink-0"
+                              style={{ background: addressToGradient(tx.user) }}
+                            />
+                            <span className="text-sm font-mono text-[var(--text-secondary)]">
+                              {shortenAddr(tx.user)}
+                            </span>
+                          </div>
+
+                          {/* Transaction */}
+                          <div className="flex items-center justify-end gap-1.5">
+                            <a
+                              href={`${CHAIN.blockExplorers?.default.url}/tx/${tx.txHash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-1.5 text-sm font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                            >
+                              {shortenAddr(tx.txHash)}
+                              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="flex-shrink-0">
+                                <path d="M4 1h7v7M11 1L1 11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </a>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+
+                {/* Pagination */}
+                {filteredTx.length > TX_PER_PAGE && (
+                  <div className="flex items-center justify-center gap-4 pt-2">
+                    <button
+                      onClick={() => setTxPage((p) => Math.max(1, p - 1))}
+                      disabled={txPage <= 1}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/[0.04] border border-white/[0.08] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/[0.08] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <path d="M8.5 3.5L5 7l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                    <span className="text-sm text-[var(--text-secondary)]">
+                      {txPage} of {txTotalPages}
+                    </span>
+                    <button
+                      onClick={() => setTxPage((p) => Math.min(txTotalPages, p + 1))}
+                      disabled={txPage >= txTotalPages}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/[0.04] border border-white/[0.08] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/[0.08] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                        <path d="M5.5 3.5L9 7l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
                   </div>
                 )}
               </div>
@@ -700,9 +979,35 @@ export default function EarnDetailPage() {
               ))}
             </div>
 
-            {sidebarTab === "deposit" ? (
+            {isLoading ? (
+              /* ── Sidebar skeleton ── */
+              <div className="space-y-3">
+                <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 space-y-3">
+                  <Skeleton className="h-8 w-full" />
+                  <div className="flex items-center justify-between">
+                    <Skeleton className="h-3 w-24" />
+                    <Skeleton className="h-3 w-10" />
+                  </div>
+                </div>
+                <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <Skeleton className="h-4 w-28" />
+                    <Skeleton className="h-4 w-16" />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Skeleton className="h-4 w-12" />
+                    <Skeleton className="h-4 w-16" />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Skeleton className="h-4 w-12" />
+                    <Skeleton className="h-4 w-12" />
+                  </div>
+                </div>
+                <Skeleton className="h-12 w-full rounded-xl" />
+              </div>
+            ) : sidebarTab === "deposit" ? (
               /* ── Deposit ── */
-              <>
+              <div ref={sidebarContentRef}>
                 <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-3">
                   <input
                     type="text"
@@ -739,12 +1044,8 @@ export default function EarnDetailPage() {
                 <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4 space-y-2.5">
                   <div className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
-                      {borrowSymbol ? (
-                        <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={18} />
-                      ) : (
-                        <div className="w-[18px] h-[18px] rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
-                      )}
-                      <span className="text-[var(--text-secondary)]">Deposit ({borrowSymbol || "..."})</span>
+                      <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={18} />
+                      <span className="text-[var(--text-secondary)]">Deposit ({borrowSymbol})</span>
                     </div>
                     <span className="text-[var(--text-primary)] font-medium">
                       {supplyAmount || "0.00"}
@@ -778,14 +1079,12 @@ export default function EarnDetailPage() {
                 >
                   {!isConnected
                     ? "Connect Wallet"
-                    : isLoading
-                    ? "Loading..."
                     : "Deposit"}
                 </button>
-              </>
+              </div>
             ) : (
               /* ── Withdraw ── */
-              <>
+              <div ref={sidebarContentRef}>
                 <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-3">
                   <input
                     type="text"
@@ -801,9 +1100,9 @@ export default function EarnDetailPage() {
                   <div className="flex items-center justify-between text-xs text-[var(--text-tertiary)]">
                     <div className="flex items-center gap-1.5">
                       {borrowSymbol && <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={16} />}
-                      <span>{isConnected && !isLoading ? `${fmt(sharesBalance, 18)} ${borrowSymbol}` : "—"}</span>
+                      <span>{isConnected ? `${fmt(sharesBalance, 18)} ${borrowSymbol}` : "—"}</span>
                     </div>
-                    {isConnected && !isLoading && sharesBalance > 0n && (
+                    {isConnected && sharesBalance > 0n && (
                       <button
                         onClick={() => setWithdrawShares(formatUnits(sharesBalance, 18))}
                         disabled={wTxStep !== "idle"}
@@ -818,12 +1117,8 @@ export default function EarnDetailPage() {
                 <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4 space-y-2.5">
                   <div className="flex items-center justify-between text-sm">
                     <div className="flex items-center gap-2">
-                      {borrowSymbol ? (
-                        <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={18} />
-                      ) : (
-                        <div className="w-[18px] h-[18px] rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
-                      )}
-                      <span className="text-[var(--text-secondary)]">Withdraw ({borrowSymbol || "..."})</span>
+                      <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={18} />
+                      <span className="text-[var(--text-secondary)]">Withdraw ({borrowSymbol})</span>
                     </div>
                     <span className="text-[var(--text-primary)] font-medium">
                       {withdrawShares || "0.00"}
@@ -845,7 +1140,6 @@ export default function EarnDetailPage() {
                   onClick={handleWithdraw}
                   disabled={
                     !isConnected ||
-                    isLoading ||
                     !withdrawShares ||
                     Number(withdrawShares) <= 0
                   }
@@ -853,11 +1147,9 @@ export default function EarnDetailPage() {
                 >
                   {!isConnected
                     ? "Connect Wallet"
-                    : isLoading
-                    ? "Loading..."
                     : "Withdraw"}
                 </button>
-              </>
+              </div>
             )}
           </div>
         </div>

@@ -1309,15 +1309,7 @@ export default function BorrowDetailPage() {
                     <div className="bg-white/[0.04] rounded-xl p-4">
                       <div className="text-xs text-[var(--text-tertiary)] mb-1">Health Factor</div>
                       <div className="flex items-center gap-2">
-                        <div className={`text-lg font-semibold ${
-                          healthFactor === Infinity
-                            ? "text-[var(--accent)]"
-                            : healthFactor >= 1.5
-                            ? "text-green-400"
-                            : healthFactor >= 1.1
-                            ? "text-yellow-400"
-                            : "text-red-400"
-                        }`}>
+                        <div className="text-lg font-semibold text-[var(--text-primary)]">
                           {healthFactor === Infinity ? "∞" : healthFactor.toFixed(2)}
                         </div>
                         <span className={`text-xs px-2 py-0.5 rounded-full ${
@@ -2373,8 +2365,8 @@ export default function BorrowDetailPage() {
                     {activeTxHash && (
                       <div className="flex items-center justify-center">
                         <a
-                          href={isCrossChain && userAddress
-                            ? `https://testnet.layerzeroscan.com/address/${userAddress}`
+                          href={isCrossChain
+                            ? `https://testnet.layerzeroscan.com/tx/${activeTxHash}`
                             : `${CHAIN.blockExplorers?.default.url}/tx/${activeTxHash}`}
                           target="_blank"
                           rel="noopener noreferrer"

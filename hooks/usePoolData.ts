@@ -33,14 +33,29 @@ export interface PoolData {
   collateralPriceDecimals: number;
 }
 
-export function usePoolData(poolAddress: `0x${string}`) {
+export function useAllPoolsData(poolAddresses: `0x${string}`[] | undefined) {
   const client = usePublicClient({ chainId: CHAIN.id });
+  const addresses = poolAddresses ?? [];
 
-  return useQuery<PoolData>({
-    queryKey: ["poolData", poolAddress],
+  return useQuery<PoolData[]>({
+    queryKey: ["allPoolsData", addresses],
     queryFn: async () => {
-      if (!client) throw new Error("No public client");
+      if (!client || addresses.length === 0) return [];
+      const results = await Promise.all(
+        addresses.map((addr) => fetchPoolData(client, addr)),
+      );
+      return results;
+    },
+    enabled: !!client && addresses.length > 0,
+    staleTime: 0,
+    refetchInterval: 5_000,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+  });
+}
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchPoolData(client: any, poolAddress: `0x${string}`): Promise<PoolData> {
       // Step 1: get router address
       const routerAddress = await client.readContract({
         address: poolAddress,
@@ -154,6 +169,16 @@ export function usePoolData(poolAddress: `0x${string}`) {
         collateralPrice: collateralPriceRound[1],
         collateralPriceDecimals: Number(collateralPriceDec),
       };
+}
+
+export function usePoolData(poolAddress: `0x${string}`) {
+  const client = usePublicClient({ chainId: CHAIN.id });
+
+  return useQuery<PoolData>({
+    queryKey: ["poolData", poolAddress],
+    queryFn: () => {
+      if (!client) throw new Error("No public client");
+      return fetchPoolData(client, poolAddress);
     },
     enabled: !!client,
     staleTime: 0,
