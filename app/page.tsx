@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useRef, useEffect, useMemo } from "react";
+import { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { useAccount, usePublicClient } from "wagmi";
 import { formatUnits } from "viem";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -13,6 +14,9 @@ import { mockErc20Abi } from "@/lib/abis/mock-erc20-abi";
 import { usePoolData, type PoolData } from "@/hooks/usePoolData";
 import { LENDING_POOL_ADDRESSES, CHAIN } from "@/lib/contracts";
 import { gsap } from "@/hooks/useGsap";
+import PoolAreaChart from "@/components/charts/PoolAreaChart";
+import TimePeriodSelect, { type TimePeriod, filterByTimePeriod } from "@/components/charts/TimePeriodSelect";
+import { usePoolSnapshots } from "@/hooks/usePoolSnapshots";
 
 const TOKEN_COLORS: Record<string, string> = {
   ETH: "#627eea", WETH: "#627eea", WBTC: "#f7931a", USDC: "#2775ca",
@@ -345,6 +349,12 @@ export default function Home() {
   const { address, isConnected } = useAccount();
   const queryClient = useQueryClient();
   const [borrowTab, setBorrowTab] = useState<BorrowTab>("loans");
+  const [depositChartOpen, setDepositChartOpen] = useState(false);
+  const [depositPeriod, setDepositPeriod] = useState<TimePeriod>("3M");
+  const [borrowChartOpen, setBorrowChartOpen] = useState(false);
+  const [borrowPeriod, setBorrowPeriod] = useState<TimePeriod>("3M");
+  const depositChartRef = useRef<HTMLDivElement>(null);
+  const borrowChartRef = useRef<HTMLDivElement>(null);
   const earnSectionRef = useRef<HTMLDivElement>(null);
   const borrowSectionRef = useRef<HTMLDivElement>(null);
   const tabContainerRef = useRef<HTMLDivElement>(null);
@@ -367,6 +377,68 @@ export default function Home() {
 
   // Fetch user positions across all pools
   const { data: userPositions, isLoading: isLoadingPositions } = useUserPositions(loadedPools, address);
+
+  // ── Chart data (use first pool's router for snapshots) ──
+  const firstPool = loadedPools.find(Boolean);
+  const { data: snapshotData } = usePoolSnapshots(
+    firstPool?.routerAddress,
+    firstPool?.borrowDecimals ?? 18,
+    firstPool?.collateralDecimals ?? 18,
+    !!firstPool,
+  );
+  const depositChartData = useMemo(
+    () => (snapshotData ? filterByTimePeriod(snapshotData, depositPeriod) : []),
+    [snapshotData, depositPeriod],
+  );
+
+  // ── Expand/collapse deposit chart ──
+  const toggleDepositChart = useCallback(() => {
+    if (!depositChartOpen) {
+      setDepositChartOpen(true);
+    } else {
+      const el = depositChartRef.current;
+      if (!el) { setDepositChartOpen(false); return; }
+      gsap.to(el, {
+        height: 0, opacity: 0, duration: 0.35, ease: "power3.in",
+        onComplete: () => setDepositChartOpen(false),
+      });
+    }
+  }, [depositChartOpen]);
+
+  // Animate deposit chart in after it mounts
+  useEffect(() => {
+    if (!depositChartOpen || !depositChartRef.current) return;
+    const el = depositChartRef.current;
+    gsap.set(el, { height: 0, opacity: 0, overflow: "hidden" });
+    gsap.to(el, { height: "auto", opacity: 1, duration: 0.45, ease: "power3.out" });
+  }, [depositChartOpen]);
+
+  // ── Expand/collapse borrow chart ──
+  const borrowChartData = useMemo(
+    () => (snapshotData ? filterByTimePeriod(snapshotData, borrowPeriod) : []),
+    [snapshotData, borrowPeriod],
+  );
+
+  const toggleBorrowChart = useCallback(() => {
+    if (!borrowChartOpen) {
+      setBorrowChartOpen(true);
+    } else {
+      const el = borrowChartRef.current;
+      if (!el) { setBorrowChartOpen(false); return; }
+      gsap.to(el, {
+        height: 0, opacity: 0, duration: 0.35, ease: "power3.in",
+        onComplete: () => setBorrowChartOpen(false),
+      });
+    }
+  }, [borrowChartOpen]);
+
+  // Animate borrow chart in after it mounts
+  useEffect(() => {
+    if (!borrowChartOpen || !borrowChartRef.current) return;
+    const el = borrowChartRef.current;
+    gsap.set(el, { height: 0, opacity: 0, overflow: "hidden" });
+    gsap.to(el, { height: "auto", opacity: 1, duration: 0.45, ease: "power3.out" });
+  }, [borrowChartOpen]);
 
   // ── Animations ──
 
@@ -487,6 +559,24 @@ export default function Home() {
 
   const hasPositions = positionRows.length > 0;
 
+  // Weighted average APY across all deposits
+  const netApy = useMemo(() => {
+    if (!userPositions?.deposits || userPositions.totalDepositUsd === 0) return 0;
+    return userPositions.deposits.reduce(
+      (sum, pos) => sum + pos.pool.supplyApy * (pos.depositUsd / userPositions.totalDepositUsd),
+      0,
+    );
+  }, [userPositions]);
+
+  // Weighted average borrow rate across all loans
+  const netBorrowRate = useMemo(() => {
+    if (!userPositions?.loans || userPositions.totalBorrowUsd === 0) return 0;
+    return userPositions.loans.reduce(
+      (sum, pos) => sum + pos.pool.borrowApy * (pos.borrowUsd / userPositions.totalBorrowUsd),
+      0,
+    );
+  }, [userPositions]);
+
   // Loading state: connected but data not yet fetched
   // Only check pools that actually exist in LENDING_POOL_ADDRESSES
   const poolsLoading = loadedPools.filter(Boolean).length < LENDING_POOL_ADDRESSES.length;
@@ -500,18 +590,91 @@ export default function Home() {
           Earn
         </h2>
 
-        {/* Your deposits card - USD total */}
+        {/* Your deposits card - USD total + expandable chart */}
         <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl p-6">
-          <div className="text-sm text-[var(--text-secondary)] mb-1">
-            Your deposits
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-sm text-[var(--text-secondary)]">Your deposits</span>
+            <button
+              onClick={toggleDepositChart}
+              className="p-1 rounded-md hover:bg-white/[0.08] transition-colors cursor-pointer"
+              title={depositChartOpen ? "Collapse" : "Expand chart"}
+            >
+              <Image
+                src={depositChartOpen ? "/baseline-close-fullscreen.webp" : "/baseline-open-in-full.webp"}
+                alt={depositChartOpen ? "Collapse" : "Expand"}
+                width={16}
+                height={16}
+                className="invert opacity-60 hover:opacity-100 transition-opacity"
+              />
+            </button>
           </div>
-          {isDataLoading ? (
-            <div className="h-10 w-40 bg-[var(--bg-tertiary)] rounded-lg animate-pulse" />
-          ) : (
-            <div className="text-4xl font-bold text-[var(--text-primary)]">
-              {isConnected && userPositions
-                ? formatUsd(userPositions.totalDepositUsd)
-                : "$0.00"}
+          <div className="flex items-center justify-between">
+            {isDataLoading ? (
+              <div className="h-10 w-40 bg-[var(--bg-tertiary)] rounded-lg animate-pulse" />
+            ) : (
+              <div className="text-4xl font-bold text-[var(--text-primary)]">
+                {isConnected && userPositions
+                  ? formatUsd(userPositions.totalDepositUsd)
+                  : "$0.00"}
+              </div>
+            )}
+            {depositChartOpen && (
+              <TimePeriodSelect value={depositPeriod} onChange={setDepositPeriod} />
+            )}
+          </div>
+
+          {/* Expandable chart + APY sidebar */}
+          {depositChartOpen && (
+            <div ref={depositChartRef} className="mt-4 grid grid-cols-1 md:grid-cols-[1fr_220px] gap-4">
+              {/* Chart */}
+              <div>
+                {depositChartData.length > 0 ? (
+                  <PoolAreaChart
+                    data={depositChartData}
+                    dataKey="totalDeposits"
+                    gradientId="dashDepositGradient"
+                    formatValue={(v) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                    yAxisFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}K` : `$${v.toFixed(0)}`}
+                  />
+                ) : (
+                  <div className="h-[220px] flex items-center justify-center text-sm text-[var(--text-tertiary)]">
+                    No historical data available
+                  </div>
+                )}
+              </div>
+
+              {/* Net APY sidebar */}
+              <div className="bg-white/[0.04] border border-white/[0.08] rounded-xl p-4 space-y-4 h-fit">
+                <div>
+                  <div className="text-xs text-[var(--text-tertiary)] mb-1">Net APY</div>
+                  <div className="text-2xl font-bold text-[var(--text-primary)]">
+                    {netApy.toFixed(2)}<span className="text-sm">%</span>
+                  </div>
+                </div>
+
+                {/* APY breakdown */}
+                {userPositions?.deposits && userPositions.deposits.length > 0 && (
+                  <div>
+                    <div className="text-xs text-[var(--text-tertiary)] mb-2">APY breakdown</div>
+                    <div className="space-y-2">
+                      {userPositions.deposits.map((pos) => (
+                        <div key={pos.pool.poolAddress} className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5">
+                            <TokenIcon symbol={pos.pool.borrowSymbol} color={getTokenColor(pos.pool.borrowSymbol)} size={18} />
+                            <span className="text-xs text-[var(--text-secondary)] truncate">
+                              {pos.pool.collateralSymbol}/{pos.pool.borrowSymbol}
+                            </span>
+                          </div>
+                          <div className="text-right flex items-center gap-2">
+                            <span className="text-[10px] text-[var(--text-tertiary)]">{formatUsd(pos.depositUsd)}</span>
+                            <span className="text-xs font-medium text-[var(--text-primary)]">{pos.pool.supplyApy.toFixed(2)}%</span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -573,52 +736,128 @@ export default function Home() {
           Borrow
         </h2>
 
-        {/* Your loans / collateral tabs — only changes USD total */}
+        {/* Your loans / collateral card + expandable chart */}
         <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl p-6">
-          <div
-            ref={tabContainerRef}
-            className="relative flex items-center gap-1 mb-3"
-          >
+          <div className="flex items-center gap-2 mb-1">
             <div
-              ref={tabIndicatorRef}
-              className="absolute top-0 h-full rounded-lg bg-[var(--bg-tertiary)] pointer-events-none z-0"
-              style={{ opacity: 0 }}
-            />
-            <button
-              ref={loansTabRef}
-              onClick={() => setBorrowTab("loans")}
-              className={`relative z-10 px-3 py-1 rounded-lg text-sm font-medium transition-colors duration-200 cursor-pointer ${
-                borrowTab === "loans"
-                  ? "text-[var(--text-primary)]"
-                  : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
-              }`}
+              ref={tabContainerRef}
+              className="relative flex items-center gap-1"
             >
-              Your loans
-            </button>
+              <div
+                ref={tabIndicatorRef}
+                className="absolute top-0 h-full rounded-lg bg-[var(--bg-tertiary)] pointer-events-none z-0"
+                style={{ opacity: 0 }}
+              />
+              <button
+                ref={loansTabRef}
+                onClick={() => setBorrowTab("loans")}
+                className={`relative z-10 px-3 py-1 rounded-lg text-sm font-medium transition-colors duration-200 cursor-pointer ${
+                  borrowTab === "loans"
+                    ? "text-[var(--text-primary)]"
+                    : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+                }`}
+              >
+                Your loans
+              </button>
+              <button
+                ref={collateralTabRef}
+                onClick={() => setBorrowTab("collateral")}
+                className={`relative z-10 px-3 py-1 rounded-lg text-sm font-medium transition-colors duration-200 cursor-pointer ${
+                  borrowTab === "collateral"
+                    ? "text-[var(--text-primary)]"
+                    : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+                }`}
+              >
+                Your collateral
+              </button>
+            </div>
             <button
-              ref={collateralTabRef}
-              onClick={() => setBorrowTab("collateral")}
-              className={`relative z-10 px-3 py-1 rounded-lg text-sm font-medium transition-colors duration-200 cursor-pointer ${
-                borrowTab === "collateral"
-                  ? "text-[var(--text-primary)]"
-                  : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
-              }`}
+              onClick={toggleBorrowChart}
+              className="p-1 rounded-md hover:bg-white/[0.08] transition-colors cursor-pointer"
+              title={borrowChartOpen ? "Collapse" : "Expand chart"}
             >
-              Your collateral
+              <Image
+                src={borrowChartOpen ? "/baseline-close-fullscreen.webp" : "/baseline-open-in-full.webp"}
+                alt={borrowChartOpen ? "Collapse" : "Expand"}
+                width={16}
+                height={16}
+                className="invert opacity-60 hover:opacity-100 transition-opacity"
+              />
             </button>
           </div>
-          {isDataLoading ? (
-            <div className="h-10 w-40 bg-[var(--bg-tertiary)] rounded-lg animate-pulse" />
-          ) : (
-            <div ref={borrowBalanceRef} className="text-4xl font-bold text-[var(--text-primary)]">
-              {(isConnected && userPositions
-                ? borrowTab === "loans"
-                  ? formatUsd(totalLoanUsd)
-                  : formatUsd(userPositions.totalCollateralUsd)
-                : "$0.00"
-              ).split("").map((ch, i) => (
-                <span key={`${borrowTab}-${ch}-${i}`} className="balance-char inline-block">{ch}</span>
-              ))}
+
+          <div className="flex items-center justify-between">
+            {isDataLoading ? (
+              <div className="h-10 w-40 bg-[var(--bg-tertiary)] rounded-lg animate-pulse" />
+            ) : (
+              <div ref={borrowBalanceRef} className="text-4xl font-bold text-[var(--text-primary)]">
+                {(isConnected && userPositions
+                  ? borrowTab === "loans"
+                    ? formatUsd(totalLoanUsd)
+                    : formatUsd(userPositions.totalCollateralUsd)
+                  : "$0.00"
+                ).split("").map((ch, i) => (
+                  <span key={`${borrowTab}-${ch}-${i}`} className="balance-char inline-block">{ch}</span>
+                ))}
+              </div>
+            )}
+            {borrowChartOpen && (
+              <TimePeriodSelect value={borrowPeriod} onChange={setBorrowPeriod} />
+            )}
+          </div>
+
+          {/* Expandable chart + Net Rate sidebar */}
+          {borrowChartOpen && (
+            <div ref={borrowChartRef} className="mt-4 grid grid-cols-1 md:grid-cols-[1fr_220px] gap-4">
+              {/* Chart */}
+              <div>
+                {borrowChartData.length > 0 ? (
+                  <PoolAreaChart
+                    data={borrowChartData}
+                    dataKey={borrowTab === "collateral" ? "totalCollateral" : "totalBorrows"}
+                    gradientId={`dashBorrow${borrowTab}Gradient`}
+                    formatValue={(v) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                    yAxisFormatter={(v) => v >= 1000 ? `$${(v / 1000).toFixed(0)}K` : `$${v.toFixed(0)}`}
+                  />
+                ) : (
+                  <div className="h-[220px] flex items-center justify-center text-sm text-[var(--text-tertiary)]">
+                    No historical data available
+                  </div>
+                )}
+              </div>
+
+              {/* Net Rate sidebar */}
+              <div className="bg-white/[0.04] border border-white/[0.08] rounded-xl p-4 space-y-4 h-fit">
+                <div>
+                  <div className="text-xs text-[var(--text-tertiary)] mb-1">Net Rate</div>
+                  <div className="text-2xl font-bold text-[var(--text-primary)]">
+                    {netBorrowRate.toFixed(2)}<span className="text-sm">%</span>
+                  </div>
+                </div>
+
+                {userPositions?.loans && userPositions.loans.length > 0 ? (
+                  <div className="space-y-2">
+                    {userPositions.loans.map((pos) => (
+                      <div key={pos.pool.poolAddress} className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-1.5">
+                          <TokenIcon symbol={pos.pool.borrowSymbol} color={getTokenColor(pos.pool.borrowSymbol)} size={18} />
+                          <span className="text-xs text-[var(--text-secondary)] truncate">
+                            {pos.pool.collateralSymbol}/{pos.pool.borrowSymbol}
+                          </span>
+                        </div>
+                        <div className="text-right flex items-center gap-2">
+                          <span className="text-[10px] text-[var(--text-tertiary)]">{formatUsd(pos.borrowUsd)}</span>
+                          <span className="text-xs font-medium text-[var(--text-primary)]">{pos.pool.borrowApy.toFixed(2)}%</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-[var(--text-tertiary)]">
+                    You currently have no Borrow position.
+                  </p>
+                )}
+              </div>
             </div>
           )}
         </div>
