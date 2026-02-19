@@ -755,12 +755,32 @@ export default function EarnDetailPage() {
                     </DetailRow>
 
                     <DetailRow label="Pool Address">
-                      <span className="text-sm font-mono text-[var(--text-secondary)]">{shortenAddr(lendingPoolAddr)}</span>
+                      <a
+                        href={`${CHAIN.blockExplorers?.default.url}/address/${lendingPoolAddr}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center gap-1.5 text-sm font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                      >
+                        {shortenAddr(lendingPoolAddr)}
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="flex-shrink-0">
+                          <path d="M4 1h7v7M11 1L1 11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                        </svg>
+                      </a>
                     </DetailRow>
 
                     {routerAddress && (
                       <DetailRow label="Router Address">
-                        <span className="text-sm font-mono text-[var(--text-secondary)]">{shortenAddr(routerAddress)}</span>
+                        <a
+                          href={`${CHAIN.blockExplorers?.default.url}/address/${routerAddress}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="flex items-center gap-1.5 text-sm font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                        >
+                          {shortenAddr(routerAddress)}
+                          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="flex-shrink-0">
+                            <path d="M4 1h7v7M11 1L1 11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </a>
                       </DetailRow>
                     )}
 
