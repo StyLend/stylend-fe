@@ -20,6 +20,20 @@ import TimePeriodSelect, { type TimePeriod, filterByTimePeriod } from "@/compone
 import { useAggregatedSnapshots, type PoolCollateralInfo } from "@/hooks/useAggregatedSnapshots";
 import { useUserActivity, type ActivityFilter } from "@/hooks/useUserActivity";
 
+const ACTIVITY_FILTERS: { value: ActivityFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "deposit", label: "Deposits" },
+  { value: "withdraw", label: "Withdraws" },
+  { value: "borrow", label: "Borrows" },
+  { value: "repay", label: "Repays" },
+  { value: "supply-collateral", label: "Supply Collateral" },
+  { value: "withdraw-collateral", label: "Withdraw Collateral" },
+];
+
+function getFilterLabel(value: ActivityFilter): string {
+  return ACTIVITY_FILTERS.find((f) => f.value === value)?.label ?? "All";
+}
+
 const TOKEN_COLORS: Record<string, string> = {
   ETH: "#627eea", WETH: "#627eea", WBTC: "#f7931a", USDC: "#2775ca",
   USDT: "#26a17b", DAI: "#f5ac37", ARB: "#28a0f0", LINK: "#2a5ada",
@@ -392,6 +406,10 @@ export default function Home() {
   const [activityPage, setActivityPage] = useState(1);
   const activitySectionRef = useRef<HTMLDivElement>(null);
   const activityTableRef = useRef<HTMLDivElement>(null);
+  const [filterDropdownOpen, setFilterDropdownOpen] = useState(false);
+  const filterDropdownRef = useRef<HTMLDivElement>(null);
+  const filterMenuRef = useRef<HTMLDivElement>(null);
+  const filterChevronRef = useRef<SVGSVGElement>(null);
 
   // Force refetch all dashboard data on mount (after navigating from action pages)
   useEffect(() => {
@@ -453,6 +471,49 @@ export default function Home() {
     [filteredActivity, activityPage],
   );
   useEffect(() => { setActivityPage(1); }, [activityFilter]);
+
+  // ── Filter dropdown GSAP animation ──
+  const closeFilterDropdown = useCallback(() => {
+    const menu = filterMenuRef.current;
+    const chevron = filterChevronRef.current;
+    if (!menu) { setFilterDropdownOpen(false); return; }
+    gsap.to(menu, {
+      autoAlpha: 0, y: -8, scaleY: 0.9, duration: 0.2, ease: "power3.in",
+      onComplete: () => setFilterDropdownOpen(false),
+    });
+    if (chevron) gsap.to(chevron, { rotation: 0, duration: 0.2, ease: "power3.in" });
+  }, []);
+
+  const toggleFilterDropdown = useCallback(() => {
+    if (filterDropdownOpen) {
+      closeFilterDropdown();
+    } else {
+      setFilterDropdownOpen(true);
+    }
+  }, [filterDropdownOpen, closeFilterDropdown]);
+
+  // Animate menu in after it mounts
+  useEffect(() => {
+    if (!filterDropdownOpen) return;
+    const menu = filterMenuRef.current;
+    const chevron = filterChevronRef.current;
+    if (!menu) return;
+    gsap.set(menu, { autoAlpha: 0, y: -8, scaleY: 0.9, transformOrigin: "top center" });
+    gsap.to(menu, { autoAlpha: 1, y: 0, scaleY: 1, duration: 0.25, ease: "power3.out" });
+    if (chevron) gsap.to(chevron, { rotation: 180, duration: 0.25, ease: "power3.out" });
+  }, [filterDropdownOpen]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!filterDropdownOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (filterDropdownRef.current && !filterDropdownRef.current.contains(e.target as Node)) {
+        closeFilterDropdown();
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [filterDropdownOpen, closeFilterDropdown]);
 
   // ── Expand/collapse deposit chart ──
   const toggleDepositChart = useCallback(() => {
@@ -988,11 +1049,60 @@ export default function Home() {
                 <Link
                   key={row.pool.poolAddress}
                   href={`/borrow/${row.pool.poolAddress}`}
-                  className="grid md:grid-cols-[2fr_1fr_1.5fr_1.5fr] items-center px-4 md:px-6 py-4 border-b border-white/[0.06] last:border-b-0 hover:bg-white/[0.05] transition-colors cursor-pointer"
+                  className="block md:grid md:grid-cols-[2fr_1fr_1.5fr_1.5fr] md:items-center px-4 md:px-6 py-4 border-b border-white/[0.06] last:border-b-0 hover:bg-white/[0.05] transition-colors cursor-pointer"
                 >
+                  {/* ── Mobile layout ── */}
+                  <div className="md:hidden space-y-3">
+                    {/* Collateral */}
+                    <div>
+                      <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider block mb-1.5">Collateral</span>
+                      <div className="space-y-1.5">
+                        {row.collaterals.map((c, i) => (
+                          <div key={i} className="flex items-center gap-1.5">
+                            <TokenIcon symbol={c.tokenSymbol} color={c.tokenColor} size={20} />
+                            <span className="text-sm font-medium text-[var(--text-primary)]">
+                              {fmt(c.amount, c.tokenDecimals)} {c.tokenSymbol}
+                            </span>
+                            <span className="text-[10px] text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] px-1.5 py-0.5 rounded">
+                              {formatUsd(c.usd)}
+                            </span>
+                          </div>
+                        ))}
+                        {row.collaterals.length === 0 && (
+                          <span className="text-sm text-[var(--text-tertiary)]">—</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Loan + Rate + Health in a row */}
+                    <div className="flex items-end justify-between gap-3 pt-2 border-t border-white/[0.04]">
+                      <div>
+                        <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider block mb-1">Loan</span>
+                        {row.borrowAmount > 0n ? (
+                          <div className="flex items-center gap-1.5">
+                            <TokenIcon symbol={row.pool.borrowSymbol} color={getTokenColor(row.pool.borrowSymbol)} size={20} />
+                            <span className="text-sm font-medium text-[var(--text-primary)]">
+                              {fmt(row.borrowAmount, row.pool.borrowDecimals)} {row.pool.borrowSymbol}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-sm text-[var(--text-tertiary)]">—</span>
+                        )}
+                      </div>
+                      <div className="text-center">
+                        <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider block mb-1">Rate</span>
+                        <span className="text-sm font-medium text-[var(--text-primary)]">{row.pool.borrowApy.toFixed(2)}%</span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider block mb-1">Health</span>
+                        <span className={`text-sm font-medium ${healthColor}`}>{healthStr}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* ── Desktop layout (grid cells) ── */}
                   {/* Collateral */}
-                  <div className="flex flex-col gap-1.5">
-                    <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider md:hidden">Collateral</span>
+                  <div className="hidden md:flex flex-col gap-1.5">
                     {row.collaterals.map((c, i) => (
                       <div key={i} className="flex items-center gap-1.5">
                         <TokenIcon symbol={c.tokenSymbol} color={c.tokenColor} size={22} />
@@ -1010,8 +1120,7 @@ export default function Home() {
                   </div>
 
                   {/* Loan */}
-                  <div className="flex flex-col gap-1.5 md:items-center">
-                    <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider md:hidden">Loan</span>
+                  <div className="hidden md:flex flex-col gap-1.5 items-center">
                     {row.borrowAmount > 0n ? (
                       <div className="flex items-center gap-1.5">
                         <TokenIcon symbol={row.pool.borrowSymbol} color={getTokenColor(row.pool.borrowSymbol)} size={22} />
@@ -1027,20 +1136,18 @@ export default function Home() {
                     )}
                   </div>
 
-                  {/* Rate + Health — inline on mobile */}
-                  <div className="flex items-center gap-4 md:contents">
-                    <div className="md:text-center">
-                      <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider md:hidden block mb-0.5">Rate</span>
-                      <span className="text-sm font-medium text-[var(--text-primary)]">
-                        {row.pool.borrowApy.toFixed(2)}%
-                      </span>
-                    </div>
-                    <div className="md:text-right">
-                      <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider md:hidden block mb-0.5">Health</span>
-                      <span className={`text-sm font-medium ${healthColor}`}>
-                        {healthStr}
-                      </span>
-                    </div>
+                  {/* Rate */}
+                  <div className="hidden md:block text-center">
+                    <span className="text-sm font-medium text-[var(--text-primary)]">
+                      {row.pool.borrowApy.toFixed(2)}%
+                    </span>
+                  </div>
+
+                  {/* Health */}
+                  <div className="hidden md:block text-right">
+                    <span className={`text-sm font-medium ${healthColor}`}>
+                      {healthStr}
+                    </span>
                   </div>
                 </Link>
               );
@@ -1069,24 +1176,56 @@ export default function Home() {
           </h2>
 
           <div className="space-y-4">
-            <div className="grid grid-cols-4 md:flex md:items-center gap-1.5">
-              {(["all", "deposit", "withdraw", "borrow", "repay", "supply-collateral", "withdraw-collateral"] as const).map((f) => (
+            {/* Mobile: custom dropdown */}
+            <div ref={filterDropdownRef} className="relative md:hidden">
+              <button
+                onClick={toggleFilterDropdown}
+                className="w-full flex items-center justify-between px-4 py-2.5 rounded-2xl bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] text-sm font-medium text-[var(--text-primary)] cursor-pointer active:scale-[0.98] transition-transform"
+              >
+                {getFilterLabel(activityFilter)}
+                <svg ref={filterChevronRef} width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-[var(--text-tertiary)]">
+                  <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+
+              {filterDropdownOpen && (
+                <div
+                  ref={filterMenuRef}
+                  className="absolute left-0 right-0 top-[calc(100%+6px)] z-30 py-1.5 rounded-2xl bg-[rgba(8,12,28,0.95)] backdrop-blur-xl border border-white/[0.08] shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
+                >
+                  {ACTIVITY_FILTERS.map((f) => (
+                    <button
+                      key={f.value}
+                      onClick={() => {
+                        setActivityFilter(f.value);
+                        closeFilterDropdown();
+                      }}
+                      className={`w-full text-left px-4 py-2.5 text-sm transition-colors cursor-pointer ${
+                        activityFilter === f.value
+                          ? "text-[var(--text-primary)] bg-white/[0.08]"
+                          : "text-[var(--text-secondary)] active:bg-white/[0.05]"
+                      }`}
+                    >
+                      {f.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Desktop: inline buttons */}
+            <div className="hidden md:flex md:items-center gap-1.5">
+              {ACTIVITY_FILTERS.map((f) => (
                 <button
-                  key={f}
-                  onClick={() => setActivityFilter(f)}
-                  className={`px-2 md:px-3 py-1.5 text-[11px] md:text-xs font-medium rounded-lg transition-colors cursor-pointer text-center ${
-                    activityFilter === f
+                  key={f.value}
+                  onClick={() => setActivityFilter(f.value)}
+                  className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer text-center ${
+                    activityFilter === f.value
                       ? "bg-white/[0.1] text-[var(--text-primary)]"
                       : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:bg-white/[0.04]"
                   }`}
                 >
-                  {f === "all" ? "All"
-                    : f === "deposit" ? "Deposits"
-                    : f === "withdraw" ? "Withdraws"
-                    : f === "borrow" ? "Borrows"
-                    : f === "repay" ? "Repays"
-                    : f === "supply-collateral" ? "Supply Collateral"
-                    : "Withdraw Collateral"}
+                  {f.label}
                 </button>
               ))}
             </div>

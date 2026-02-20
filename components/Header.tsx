@@ -44,14 +44,14 @@ export default function Header() {
   }, [pathname]);
 
   return (
-    <header ref={headerRef} className="flex items-center justify-between px-6 py-4 sticky top-0 z-20 bg-[var(--bg-primary)]">
-      <div className="flex items-center gap-4">
+    <header ref={headerRef} className="flex items-center justify-between px-4 sm:px-6 py-4 sticky top-0 z-20 bg-[var(--bg-primary)]">
+      <div className="flex items-center gap-2 sm:gap-4">
         {/* Spacer for mobile hamburger */}
-        <div className="w-8 lg:hidden" />
-        <h1 key={pathname} ref={titleRef} className="text-2xl font-bold text-[var(--text-primary)] font-panchang">{title}</h1>
+        <div className="w-10 shrink-0 lg:hidden" />
+        <h1 key={pathname} ref={titleRef} className="text-lg sm:text-2xl font-bold text-[var(--text-primary)] font-panchang whitespace-nowrap">{title}</h1>
       </div>
 
-      <div ref={actionsRef} className="flex items-center gap-3">
+      <div ref={actionsRef} className="flex items-center gap-3 shrink-0">
         <ConnectWalletButton />
       </div>
     </header>
