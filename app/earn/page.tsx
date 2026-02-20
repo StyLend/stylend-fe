@@ -29,81 +29,122 @@ function formatAmount(value: bigint, decimals: number): string {
 function EarnPoolRow({ poolAddress }: { poolAddress: `0x${string}` }) {
   const { data: pool, isLoading } = usePoolData(poolAddress);
 
-  return (
-    <Link
-      href={`/earn/${poolAddress}`}
-      className="grid md:grid-cols-[2fr_1fr_1.2fr_1.2fr_0.8fr] items-center px-6 py-5 border-b border-white/[0.06] last:border-b-0 hover:bg-white/[0.05] transition-colors cursor-pointer"
-    >
-      {/* Asset — supply token */}
-      <div className="flex items-center gap-3">
-        {isLoading || !pool ? (
-          <>
+  if (isLoading || !pool) {
+    return (
+      <div className="px-4 md:px-6 py-5 border-b border-white/[0.12] md:border-white/[0.06] last:border-b-0">
+        {/* Mobile skeleton */}
+        <div className="md:hidden flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-[var(--bg-tertiary)] animate-pulse shrink-0" />
+          <div className="flex-1 space-y-1.5">
+            <div className="h-4 w-24 rounded bg-[var(--bg-tertiary)] animate-pulse" />
+            <div className="h-3 w-16 rounded bg-[var(--bg-tertiary)] animate-pulse" />
+          </div>
+          <div className="h-4 w-14 rounded bg-[var(--bg-tertiary)] animate-pulse" />
+        </div>
+        {/* Desktop skeleton */}
+        <div className="hidden md:grid grid-cols-[2fr_1fr_1.2fr_1.2fr_0.8fr] items-center">
+          <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-full bg-[var(--bg-tertiary)] animate-pulse shrink-0" />
             <div className="space-y-1.5">
               <div className="h-4 w-24 rounded bg-[var(--bg-tertiary)] animate-pulse" />
               <div className="h-3 w-16 rounded bg-[var(--bg-tertiary)] animate-pulse" />
             </div>
-          </>
-        ) : (
-          <>
-            <TokenIcon symbol={pool.borrowSymbol} color={getTokenColor(pool.borrowSymbol)} size={36} />
-            <div>
-              <div className="font-semibold text-[var(--text-primary)]">{pool.borrowSymbol}</div>
-              <div className="text-xs text-[var(--text-tertiary)]">{pool.borrowName}</div>
-            </div>
-          </>
-        )}
-      </div>
-
-      {/* Collateral — exposure */}
-      <div>
-        {isLoading || !pool ? (
+          </div>
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
             <div className="h-4 w-12 rounded bg-[var(--bg-tertiary)] animate-pulse" />
           </div>
-        ) : (
-          <div className="flex items-center gap-2">
-            <TokenIcon symbol={pool.collateralSymbol} color={getTokenColor(pool.collateralSymbol)} size={24} />
-            <span className="text-sm font-medium text-[var(--text-primary)]">{pool.collateralSymbol}</span>
-            <span className="text-[10px] font-medium text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] px-1.5 py-0.5 rounded-full">
-              {pool.ltv.toFixed(0)}%
+          <div className="h-4 w-28 rounded bg-[var(--bg-tertiary)] animate-pulse ml-auto" />
+          <div className="h-4 w-28 rounded bg-[var(--bg-tertiary)] animate-pulse ml-auto" />
+          <div className="h-4 w-14 rounded bg-[var(--bg-tertiary)] animate-pulse ml-auto" />
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <Link
+      href={`/earn/${poolAddress}`}
+      className="block md:grid md:grid-cols-[2fr_1fr_1.2fr_1.2fr_0.8fr] md:items-center px-4 md:px-6 py-4 md:py-5 border-b border-white/[0.12] md:border-white/[0.06] last:border-b-0 hover:bg-white/[0.05] transition-colors cursor-pointer"
+    >
+      {/* ── Mobile layout ── */}
+      <div className="md:hidden space-y-3">
+        {/* Top: Asset + APY */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <TokenIcon symbol={pool.borrowSymbol} color={getTokenColor(pool.borrowSymbol)} size={36} />
+            <div>
+              <div className="font-semibold text-[var(--text-primary)]">{pool.borrowSymbol}</div>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <TokenIcon symbol={pool.collateralSymbol} color={getTokenColor(pool.collateralSymbol)} size={16} />
+                <span className="text-xs text-[var(--text-tertiary)]">{pool.collateralSymbol}</span>
+                <span className="text-[10px] text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] px-1 py-0.5 rounded">
+                  {pool.ltv.toFixed(0)}%
+                </span>
+              </div>
+            </div>
+          </div>
+          <div className="text-right">
+            <span className="text-lg font-semibold text-[var(--accent)]">{pool.supplyApy.toFixed(2)}%</span>
+            <span className="text-[10px] text-[var(--text-tertiary)] block">APY</span>
+          </div>
+        </div>
+
+        {/* Bottom: Deposits + Liquidity */}
+        <div className="flex items-end justify-between pt-2 border-t border-white/[0.04]">
+          <div>
+            <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider block mb-1">Total Deposits</span>
+            <span className="text-sm font-medium text-[var(--text-primary)]">
+              {formatAmount(pool.totalSupply, pool.borrowDecimals)} {pool.borrowSymbol}
             </span>
           </div>
-        )}
+          <div className="text-right">
+            <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider block mb-1">Liquidity</span>
+            <span className="text-sm font-medium text-[var(--text-primary)]">
+              {formatAmount(pool.liquidity, pool.borrowDecimals)} {pool.borrowSymbol}
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Desktop layout (grid cells) ── */}
+      {/* Asset */}
+      <div className="hidden md:flex items-center gap-3">
+        <TokenIcon symbol={pool.borrowSymbol} color={getTokenColor(pool.borrowSymbol)} size={36} />
+        <div>
+          <div className="font-semibold text-[var(--text-primary)]">{pool.borrowSymbol}</div>
+          <div className="text-xs text-[var(--text-tertiary)]">{pool.borrowName}</div>
+        </div>
+      </div>
+
+      {/* Collateral */}
+      <div className="hidden md:flex items-center gap-2">
+        <TokenIcon symbol={pool.collateralSymbol} color={getTokenColor(pool.collateralSymbol)} size={24} />
+        <span className="text-sm font-medium text-[var(--text-primary)]">{pool.collateralSymbol}</span>
+        <span className="text-[10px] font-medium text-[var(--text-tertiary)] bg-[var(--bg-tertiary)] px-1.5 py-0.5 rounded-full">
+          {pool.ltv.toFixed(0)}%
+        </span>
       </div>
 
       {/* Total Deposits */}
-      <div className="text-right">
-        {isLoading || !pool ? (
-          <div className="h-4 w-28 rounded bg-[var(--bg-tertiary)] animate-pulse ml-auto" />
-        ) : (
-          <div className="text-sm font-medium text-[var(--text-primary)]">
-            {formatAmount(pool.totalSupply, pool.borrowDecimals)} {pool.borrowSymbol}
-          </div>
-        )}
+      <div className="hidden md:block text-right">
+        <div className="text-sm font-medium text-[var(--text-primary)]">
+          {formatAmount(pool.totalSupply, pool.borrowDecimals)} {pool.borrowSymbol}
+        </div>
       </div>
 
       {/* Liquidity */}
-      <div className="text-right">
-        {isLoading || !pool ? (
-          <div className="h-4 w-28 rounded bg-[var(--bg-tertiary)] animate-pulse ml-auto" />
-        ) : (
-          <div className="text-sm font-medium text-[var(--text-primary)]">
-            {formatAmount(pool.liquidity, pool.borrowDecimals)} {pool.borrowSymbol}
-          </div>
-        )}
+      <div className="hidden md:block text-right">
+        <div className="text-sm font-medium text-[var(--text-primary)]">
+          {formatAmount(pool.liquidity, pool.borrowDecimals)} {pool.borrowSymbol}
+        </div>
       </div>
 
       {/* APY */}
-      <div className="text-right">
-        {isLoading || !pool ? (
-          <div className="h-4 w-14 rounded bg-[var(--bg-tertiary)] animate-pulse ml-auto" />
-        ) : (
-          <span className="text-sm font-medium text-[var(--accent)]">
-            {pool.supplyApy.toFixed(2)}%
-          </span>
-        )}
+      <div className="hidden md:block text-right">
+        <span className="text-sm font-medium text-[var(--accent)]">
+          {pool.supplyApy.toFixed(2)}%
+        </span>
       </div>
     </Link>
   );

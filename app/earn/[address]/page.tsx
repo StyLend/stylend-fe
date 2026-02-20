@@ -86,7 +86,7 @@ export default function EarnDetailPage() {
   const [wTxStep, setWTxStep] = useState<"idle" | "approving" | "withdrawing" | "success" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState("");
   const [wErrorMsg, setWErrorMsg] = useState("");
-  const [activeTab, setActiveTab] = useState<"overview" | "position">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "position" | "manage">("overview");
   const [sidebarTab, setSidebarTab] = useState<"deposit" | "withdraw">("deposit");
   const [depositsPeriod, setDepositsPeriod] = useState<TimePeriod>("3M");
   const [apyPeriod, setApyPeriod] = useState<TimePeriod>("1M");
@@ -96,6 +96,10 @@ export default function EarnDetailPage() {
   const [wNeedsApproval, setWNeedsApproval] = useState(false);
   const [txFilter, setTxFilter] = useState<TxFilter>("all");
   const [txPage, setTxPage] = useState(1);
+  const [txFilterOpen, setTxFilterOpen] = useState(false);
+  const txFilterRef = useRef<HTMLDivElement>(null);
+  const txFilterMenuRef = useRef<HTMLDivElement>(null);
+  const txFilterChevronRef = useRef<SVGSVGElement>(null);
 
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
@@ -107,6 +111,7 @@ export default function EarnDetailPage() {
   const withdrawCardRef = useRef<HTMLDivElement>(null);
   const withdrawContentRef = useRef<HTMLDivElement>(null);
   const sidebarContentRef = useRef<HTMLDivElement>(null);
+  const mobileSidebarContentRef = useRef<HTMLDivElement>(null);
   const prevSidebarTab = useRef(sidebarTab);
 
   // ── Contract reads ──
@@ -285,6 +290,71 @@ export default function EarnDetailPage() {
   );
   // Reset page when filter changes
   useEffect(() => { setTxPage(1); }, [txFilter]);
+
+  // ── User transactions (for Position tab) ──
+  const USER_TX_PER_PAGE = 5;
+  const [userTxPage, setUserTxPage] = useState(1);
+  const userTxRowsRef = useRef<HTMLDivElement>(null);
+  const userTx = useMemo(() => {
+    if (!allTransactions || !userAddress) return [];
+    return allTransactions.filter((t) => t.user.toLowerCase() === userAddress.toLowerCase());
+  }, [allTransactions, userAddress]);
+  const userTxTotalPages = Math.max(1, Math.ceil(userTx.length / USER_TX_PER_PAGE));
+  const paginatedUserTx = useMemo(
+    () => userTx.slice((userTxPage - 1) * USER_TX_PER_PAGE, userTxPage * USER_TX_PER_PAGE),
+    [userTx, userTxPage],
+  );
+
+  // Animate user tx rows on page change
+  useEffect(() => {
+    if (!userTxRowsRef.current) return;
+    const rows = userTxRowsRef.current.children;
+    if (!rows.length) return;
+    gsap.fromTo(
+      rows,
+      { opacity: 0, y: 12 },
+      { opacity: 1, y: 0, duration: 0.35, stagger: 0.06, ease: "power3.out" },
+    );
+  }, [userTxPage]);
+
+  // ── Tx filter dropdown ──
+  const TX_FILTERS: { value: TxFilter; label: string }[] = [
+    { value: "all", label: "All" },
+    { value: "deposit", label: "Deposits" },
+    { value: "withdraw", label: "Withdrawals" },
+  ];
+
+  const closeTxFilterDropdown = useCallback(() => {
+    const menu = txFilterMenuRef.current;
+    const chevron = txFilterChevronRef.current;
+    if (!menu) { setTxFilterOpen(false); return; }
+    gsap.to(menu, { autoAlpha: 0, y: -8, scaleY: 0.9, duration: 0.2, ease: "power3.in", onComplete: () => setTxFilterOpen(false) });
+    if (chevron) gsap.to(chevron, { rotation: 0, duration: 0.2, ease: "power3.in" });
+  }, []);
+
+  const toggleTxFilterDropdown = useCallback(() => {
+    if (txFilterOpen) closeTxFilterDropdown();
+    else setTxFilterOpen(true);
+  }, [txFilterOpen, closeTxFilterDropdown]);
+
+  useEffect(() => {
+    if (!txFilterOpen) return;
+    const menu = txFilterMenuRef.current;
+    const chevron = txFilterChevronRef.current;
+    if (!menu) return;
+    gsap.set(menu, { autoAlpha: 0, y: -8, scaleY: 0.9, transformOrigin: "top center" });
+    gsap.to(menu, { autoAlpha: 1, y: 0, scaleY: 1, duration: 0.25, ease: "power3.out" });
+    if (chevron) gsap.to(chevron, { rotation: 180, duration: 0.25, ease: "power3.out" });
+  }, [txFilterOpen]);
+
+  useEffect(() => {
+    if (!txFilterOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (txFilterRef.current && !txFilterRef.current.contains(e.target as Node)) closeTxFilterDropdown();
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [txFilterOpen, closeTxFilterDropdown]);
 
   // ── Write hooks ──
   const { writeContract: writeApprove, data: approveTxHash, reset: resetApprove } = useWriteContract();
@@ -546,33 +616,38 @@ export default function EarnDetailPage() {
     );
   }, [paginatedTx, txFilter, txPage]);
 
-  // Sidebar deposit/withdraw tab switch animation
+  // Sidebar deposit/withdraw tab switch animation (desktop + mobile)
   useEffect(() => {
     if (isLoading) return;
-    const el = sidebarContentRef.current;
-    if (!el) return;
     // Skip initial mount
     if (prevSidebarTab.current === sidebarTab) return;
     const goingRight = sidebarTab === "withdraw";
     prevSidebarTab.current = sidebarTab;
 
-    const children = el.children;
-    if (!children.length) return;
+    const timelines: gsap.core.Timeline[] = [];
 
-    const tl = gsap.timeline();
-    tl.fromTo(
-      el,
-      { opacity: 0, x: goingRight ? 40 : -40 },
-      { opacity: 1, x: 0, duration: 0.4, ease: "power3.out" },
-    );
-    tl.fromTo(
-      children,
-      { opacity: 0, y: 18 },
-      { opacity: 1, y: 0, duration: 0.35, stagger: 0.06, ease: "power3.out" },
-      "-=0.2",
-    );
+    [sidebarContentRef, mobileSidebarContentRef].forEach((ref) => {
+      const el = ref.current;
+      if (!el) return;
+      const children = el.children;
+      if (!children.length) return;
 
-    return () => { tl.kill(); };
+      const tl = gsap.timeline();
+      tl.fromTo(
+        el,
+        { opacity: 0, x: goingRight ? 40 : -40 },
+        { opacity: 1, x: 0, duration: 0.4, ease: "power3.out" },
+      );
+      tl.fromTo(
+        children,
+        { opacity: 0, y: 18 },
+        { opacity: 1, y: 0, duration: 0.35, stagger: 0.06, ease: "power3.out" },
+        "-=0.2",
+      );
+      timelines.push(tl);
+    });
+
+    return () => { timelines.forEach((tl) => tl.kill()); };
   }, [sidebarTab, isLoading]);
 
   return (
@@ -590,17 +665,19 @@ export default function EarnDetailPage() {
 
       {/* Tabs */}
       <div className="flex gap-6 border-b border-white/[0.06]">
-        {(["overview", "position"] as const).map((tab) => (
+        {(["overview", "position", "manage"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
-            className={`pb-3 text-sm font-medium capitalize transition-colors cursor-pointer ${
+            className={`pb-3 text-sm font-medium transition-colors cursor-pointer ${
+              tab === "manage" ? "lg:hidden " : ""
+            }${
               activeTab === tab
                 ? "text-[var(--text-primary)] border-b-2 border-[var(--accent)]"
                 : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
             }`}
           >
-            {tab === "position" ? "Your Position" : tab}
+            {tab === "overview" ? "Overview" : tab === "position" ? "Your Position" : "Manage Position"}
           </button>
         ))}
       </div>
@@ -790,28 +867,63 @@ export default function EarnDetailPage() {
 
               {/* All transactions */}
               <div className="space-y-4">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-3">
                   <h3 className="text-lg font-semibold text-[var(--text-primary)]">All transactions</h3>
-                  <div className="flex items-center gap-2">
-                    {(["all", "deposit", "withdraw"] as const).map((f) => (
+
+                  {/* Mobile: custom dropdown */}
+                  <div ref={txFilterRef} className="relative md:hidden">
+                    <button
+                      onClick={toggleTxFilterDropdown}
+                      className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[rgba(8,12,28,0.65)] border border-white/[0.08] text-sm font-medium text-[var(--text-primary)] cursor-pointer active:scale-[0.98] transition-transform"
+                    >
+                      {TX_FILTERS.find((f) => f.value === txFilter)?.label}
+                      <svg ref={txFilterChevronRef} width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-[var(--text-tertiary)]">
+                        <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                    {txFilterOpen && (
+                      <div
+                        ref={txFilterMenuRef}
+                        className="absolute right-0 top-[calc(100%+6px)] z-30 min-w-[140px] py-1.5 rounded-xl bg-[rgba(8,12,28,0.95)] backdrop-blur-xl border border-white/[0.08] shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
+                      >
+                        {TX_FILTERS.map((f) => (
+                          <button
+                            key={f.value}
+                            onClick={() => { setTxFilter(f.value); closeTxFilterDropdown(); }}
+                            className={`w-full text-left px-4 py-2.5 text-sm transition-colors cursor-pointer ${
+                              txFilter === f.value
+                                ? "text-[var(--text-primary)] bg-white/[0.08]"
+                                : "text-[var(--text-secondary)] active:bg-white/[0.05]"
+                            }`}
+                          >
+                            {f.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Desktop: inline buttons */}
+                  <div className="hidden md:flex items-center gap-2">
+                    {TX_FILTERS.map((f) => (
                       <button
-                        key={f}
-                        onClick={() => setTxFilter(f)}
+                        key={f.value}
+                        onClick={() => setTxFilter(f.value)}
                         className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors cursor-pointer ${
-                          txFilter === f
+                          txFilter === f.value
                             ? "bg-white/[0.1] text-[var(--text-primary)]"
                             : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:bg-white/[0.04]"
                         }`}
                       >
-                        {f === "all" ? "All" : f === "deposit" ? "Deposits" : "Withdrawals"}
+                        {f.label}
                       </button>
                     ))}
                   </div>
                 </div>
 
                 <div ref={txTableRef} className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl overflow-hidden">
-                  {/* Header */}
-                  <div className="grid grid-cols-[1.5fr_1fr_2fr_1.5fr_1.5fr] px-6 py-3 border-b border-white/[0.06] text-xs text-[var(--text-tertiary)] font-medium">
+                  {/* Header — desktop only */}
+                  <div className="hidden md:grid grid-cols-[1.5fr_1fr_2fr_1.5fr_1.5fr] px-6 py-3 border-b border-white/[0.06] text-xs text-[var(--text-tertiary)] font-medium">
                     <span className="flex items-center gap-1">
                       Date
                       <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
@@ -827,12 +939,21 @@ export default function EarnDetailPage() {
                   {/* Rows */}
                   {txLoading ? (
                     Array.from({ length: 5 }).map((_, i) => (
-                      <div key={i} className="grid grid-cols-[1.5fr_1fr_2fr_1.5fr_1.5fr] items-center px-6 py-4 border-b border-white/[0.06] last:border-b-0">
-                        <Skeleton className="h-4 w-32" />
-                        <Skeleton className="h-4 w-24" />
-                        <Skeleton className="h-4 w-36" />
-                        <Skeleton className="h-4 w-28" />
-                        <Skeleton className="h-4 w-28 ml-auto" />
+                      <div key={i} className="px-4 md:px-6 py-4 border-b border-white/[0.06] last:border-b-0">
+                        <div className="md:hidden space-y-2">
+                          <div className="flex items-center justify-between">
+                            <Skeleton className="h-4 w-20" />
+                            <Skeleton className="h-4 w-16" />
+                          </div>
+                          <Skeleton className="h-4 w-32" />
+                        </div>
+                        <div className="hidden md:grid grid-cols-[1.5fr_1fr_2fr_1.5fr_1.5fr] items-center">
+                          <Skeleton className="h-4 w-32" />
+                          <Skeleton className="h-4 w-24" />
+                          <Skeleton className="h-4 w-36" />
+                          <Skeleton className="h-4 w-28" />
+                          <Skeleton className="h-4 w-28 ml-auto" />
+                        </div>
                       </div>
                     ))
                   ) : paginatedTx.length === 0 ? (
@@ -855,62 +976,104 @@ export default function EarnDetailPage() {
                           : amount.toFixed(2);
 
                       const date = new Date(tx.timestamp * 1000);
-                      const dateStr =
+                      const datePart =
                         date.getFullYear() +
                         "-" + String(date.getMonth() + 1).padStart(2, "0") +
-                        "-" + String(date.getDate()).padStart(2, "0") +
-                        " " + String(date.getHours()).padStart(2, "0") +
+                        "-" + String(date.getDate()).padStart(2, "0");
+                      const timePart =
+                        String(date.getHours()).padStart(2, "0") +
                         ":" + String(date.getMinutes()).padStart(2, "0") +
                         ":" + String(date.getSeconds()).padStart(2, "0");
+                      const dateStr = `${datePart} ${timePart}`;
 
                       return (
                         <div
                           key={tx.id}
-                          className="tx-row grid grid-cols-[1.5fr_1fr_2fr_1.5fr_1.5fr] items-center px-6 py-4 border-b border-white/[0.06] last:border-b-0 hover:bg-white/[0.03] transition-colors"
+                          className="tx-row border-b border-white/[0.06] last:border-b-0 hover:bg-white/[0.03] transition-colors"
                         >
-                          {/* Date */}
-                          <span className="text-sm text-[var(--text-secondary)]">{dateStr}</span>
-
-                          {/* Type */}
-                          <span className="text-sm text-[var(--text-primary)]">
-                            {tx.type === "deposit" ? "Deposit" : "Withdraw"}
-                          </span>
-
-                          {/* Amount */}
-                          <div className="flex items-center gap-2">
-                            <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={20} />
-                            <span className="text-sm font-medium text-[var(--text-primary)]">
-                              {fmtAmount} {borrowSymbol}
-                            </span>
-                            <span className="text-[10px] text-[var(--text-tertiary)] bg-white/[0.06] px-1.5 py-0.5 rounded">
-                              {fmtUsd}
-                            </span>
+                          {/* ── Mobile layout ── */}
+                          <div className="md:hidden px-4 py-3 space-y-2.5">
+                            {/* Row 1: Type + Date */}
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-medium text-[var(--text-primary)]">
+                                {tx.type === "deposit" ? "Deposit" : "Withdraw"}
+                              </span>
+                              <span className="text-xs text-[var(--text-tertiary)]">
+                                {datePart} <span className="text-[var(--text-tertiary)]/60">{timePart}</span>
+                              </span>
+                            </div>
+                            {/* Row 2: Amount + USD */}
+                            <div className="flex items-center gap-2">
+                              <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={18} />
+                              <span className="text-sm font-medium text-[var(--text-primary)]">
+                                {fmtAmount} {borrowSymbol}
+                              </span>
+                              <span className="text-[10px] text-[var(--text-tertiary)] bg-white/[0.06] px-1.5 py-0.5 rounded">
+                                {fmtUsd}
+                              </span>
+                            </div>
+                            {/* Row 3: User + Tx link */}
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5">
+                                <div
+                                  className="w-4 h-4 rounded-full flex-shrink-0"
+                                  style={{ background: addressToGradient(tx.user) }}
+                                />
+                                <span className="text-xs font-mono text-[var(--text-tertiary)]">
+                                  {shortenAddr(tx.user)}
+                                </span>
+                              </div>
+                              <a
+                                href={`${CHAIN.blockExplorers?.default.url}/tx/${tx.txHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1 text-xs font-mono text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"
+                              >
+                                {shortenAddr(tx.txHash)}
+                                <svg width="10" height="10" viewBox="0 0 12 12" fill="none" className="flex-shrink-0">
+                                  <path d="M4 1h7v7M11 1L1 11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              </a>
+                            </div>
                           </div>
 
-                          {/* User */}
-                          <div className="flex items-center gap-2">
-                            <div
-                              className="w-5 h-5 rounded-full flex-shrink-0"
-                              style={{ background: addressToGradient(tx.user) }}
-                            />
-                            <span className="text-sm font-mono text-[var(--text-secondary)]">
-                              {shortenAddr(tx.user)}
+                          {/* ── Desktop layout ── */}
+                          <div className="hidden md:grid grid-cols-[1.5fr_1fr_2fr_1.5fr_1.5fr] items-center px-6 py-4">
+                            <span className="text-sm text-[var(--text-secondary)]">{dateStr}</span>
+                            <span className="text-sm text-[var(--text-primary)]">
+                              {tx.type === "deposit" ? "Deposit" : "Withdraw"}
                             </span>
-                          </div>
-
-                          {/* Transaction */}
-                          <div className="flex items-center justify-end gap-1.5">
-                            <a
-                              href={`${CHAIN.blockExplorers?.default.url}/tx/${tx.txHash}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-1.5 text-sm font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
-                            >
-                              {shortenAddr(tx.txHash)}
-                              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="flex-shrink-0">
-                                <path d="M4 1h7v7M11 1L1 11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            </a>
+                            <div className="flex items-center gap-2">
+                              <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={20} />
+                              <span className="text-sm font-medium text-[var(--text-primary)]">
+                                {fmtAmount} {borrowSymbol}
+                              </span>
+                              <span className="text-[10px] text-[var(--text-tertiary)] bg-white/[0.06] px-1.5 py-0.5 rounded">
+                                {fmtUsd}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div
+                                className="w-5 h-5 rounded-full flex-shrink-0"
+                                style={{ background: addressToGradient(tx.user) }}
+                              />
+                              <span className="text-sm font-mono text-[var(--text-secondary)]">
+                                {shortenAddr(tx.user)}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <a
+                                href={`${CHAIN.blockExplorers?.default.url}/tx/${tx.txHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1.5 text-sm font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                              >
+                                {shortenAddr(tx.txHash)}
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="flex-shrink-0">
+                                  <path d="M4 1h7v7M11 1L1 11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              </a>
+                            </div>
                           </div>
                         </div>
                       );
@@ -946,8 +1109,9 @@ export default function EarnDetailPage() {
                 )}
               </div>
             </>
-          ) : (
+          ) : activeTab === "position" ? (
             /* Position tab */
+            <>
             <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-6">
               {!isConnected ? (
                 <div className="text-center py-12 text-sm text-[var(--text-tertiary)]">
@@ -976,11 +1140,320 @@ export default function EarnDetailPage() {
                 </div>
               )}
             </div>
+
+            {/* Your Transactions */}
+            {isConnected && (
+              <div className="space-y-3 mt-2">
+                <h3 className="text-lg font-semibold text-[var(--text-primary)]">Your Transactions</h3>
+                <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl overflow-hidden">
+                  {/* Header — desktop only */}
+                  <div className="hidden md:grid grid-cols-[1.5fr_1fr_2fr_1.5fr] px-6 py-3 border-b border-white/[0.06] text-xs text-[var(--text-tertiary)] font-medium">
+                    <span>Date</span>
+                    <span>Type</span>
+                    <span>Amount</span>
+                    <span className="text-right">Transaction</span>
+                  </div>
+
+                  {txLoading ? (
+                    Array.from({ length: 3 }).map((_, i) => (
+                      <div key={i} className="px-4 md:px-6 py-4 border-b border-white/[0.06] last:border-b-0">
+                        <div className="flex items-center justify-between">
+                          <Skeleton className="h-4 w-16" />
+                          <Skeleton className="h-4 w-24" />
+                        </div>
+                      </div>
+                    ))
+                  ) : paginatedUserTx.length === 0 ? (
+                    <div className="py-10 text-center text-sm text-[var(--text-tertiary)]">
+                      No transactions yet
+                    </div>
+                  ) : (
+                    <div ref={userTxRowsRef}>
+                    {paginatedUserTx.map((tx) => {
+                      const amount = Number(formatUnits(BigInt(tx.amount), borrowDecimals));
+                      const usd = amount * borrowPrice;
+                      const fmtUsd = usd >= 1_000_000
+                        ? `$${(usd / 1_000_000).toFixed(2)}M`
+                        : usd >= 1_000
+                          ? `$${(usd / 1_000).toFixed(2)}k`
+                          : `$${usd.toFixed(2)}`;
+                      const fmtAmount = amount >= 1_000_000
+                        ? `${(amount / 1_000_000).toFixed(2)}M`
+                        : amount >= 1_000
+                          ? `${amount.toLocaleString("en-US", { maximumFractionDigits: 2 })}`
+                          : amount.toFixed(2);
+                      const date = new Date(tx.timestamp * 1000);
+                      const datePart =
+                        date.getFullYear() +
+                        "-" + String(date.getMonth() + 1).padStart(2, "0") +
+                        "-" + String(date.getDate()).padStart(2, "0");
+                      const timePart =
+                        String(date.getHours()).padStart(2, "0") +
+                        ":" + String(date.getMinutes()).padStart(2, "0") +
+                        ":" + String(date.getSeconds()).padStart(2, "0");
+
+                      return (
+                        <div key={tx.id} className="border-b border-white/[0.06] last:border-b-0 hover:bg-white/[0.03] transition-colors">
+                          {/* Mobile */}
+                          <div className="md:hidden px-4 py-3 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-medium text-[var(--text-primary)]">
+                                {tx.type === "deposit" ? "Deposit" : "Withdraw"}
+                              </span>
+                              <span className="text-xs text-[var(--text-tertiary)]">
+                                {datePart} <span className="opacity-60">{timePart}</span>
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5">
+                                <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={18} />
+                                <span className="text-sm font-medium text-[var(--text-primary)]">
+                                  {fmtAmount} {borrowSymbol}
+                                </span>
+                                <span className="text-[10px] text-[var(--text-tertiary)] bg-white/[0.06] px-1.5 py-0.5 rounded">
+                                  {fmtUsd}
+                                </span>
+                              </div>
+                              <a
+                                href={`${CHAIN.blockExplorers?.default.url}/tx/${tx.txHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1 text-xs font-mono text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"
+                              >
+                                {shortenAddr(tx.txHash)}
+                                <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M4 1h7v7M11 1L1 11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                              </a>
+                            </div>
+                          </div>
+                          {/* Desktop */}
+                          <div className="hidden md:grid grid-cols-[1.5fr_1fr_2fr_1.5fr] items-center px-6 py-4">
+                            <span className="text-sm text-[var(--text-secondary)]">{datePart} {timePart}</span>
+                            <span className="text-sm text-[var(--text-primary)]">
+                              {tx.type === "deposit" ? "Deposit" : "Withdraw"}
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={20} />
+                              <span className="text-sm font-medium text-[var(--text-primary)]">
+                                {fmtAmount} {borrowSymbol}
+                              </span>
+                              <span className="text-[10px] text-[var(--text-tertiary)] bg-white/[0.06] px-1.5 py-0.5 rounded">
+                                {fmtUsd}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <a
+                                href={`${CHAIN.blockExplorers?.default.url}/tx/${tx.txHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1.5 text-sm font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                              >
+                                {shortenAddr(tx.txHash)}
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="none"><path d="M4 1h7v7M11 1L1 11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                              </a>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Pagination */}
+                {userTx.length > USER_TX_PER_PAGE && (
+                  <div className="flex items-center justify-center gap-4 pt-1">
+                    <button
+                      onClick={() => setUserTxPage((p) => Math.max(1, p - 1))}
+                      disabled={userTxPage <= 1}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/[0.04] border border-white/[0.08] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/[0.08] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M8.5 3.5L5 7l3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    </button>
+                    <span className="text-sm text-[var(--text-secondary)]">
+                      {userTxPage} of {userTxTotalPages}
+                    </span>
+                    <button
+                      onClick={() => setUserTxPage((p) => Math.min(userTxTotalPages, p + 1))}
+                      disabled={userTxPage >= userTxTotalPages}
+                      className="w-8 h-8 flex items-center justify-center rounded-lg bg-white/[0.04] border border-white/[0.08] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/[0.08] disabled:opacity-30 disabled:cursor-not-allowed transition-colors cursor-pointer"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M5.5 3.5L9 7l-3.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            </>
+          ) : (
+            /* Manage Position tab (mobile only) */
+            <div className="lg:hidden">
+              <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-5">
+                {/* Tab selector */}
+                <div className="flex mb-5 bg-white/[0.04] rounded-lg p-1">
+                  {(["deposit", "withdraw"] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => { setSidebarTab(tab); if (tab === "deposit") resetWTx(); else resetTx(); }}
+                      className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer capitalize ${
+                        sidebarTab === tab
+                          ? "bg-white/[0.08] text-[var(--text-primary)] shadow-sm"
+                          : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+                      }`}
+                    >
+                      {tab}
+                    </button>
+                  ))}
+                </div>
+
+                {isLoading ? (
+                  <div className="space-y-3">
+                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 space-y-3">
+                      <Skeleton className="h-8 w-full" />
+                      <div className="flex items-center justify-between">
+                        <Skeleton className="h-3 w-24" />
+                        <Skeleton className="h-3 w-10" />
+                      </div>
+                    </div>
+                    <Skeleton className="h-12 w-full rounded-xl" />
+                  </div>
+                ) : sidebarTab === "deposit" ? (
+                  <div ref={mobileSidebarContentRef}>
+                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-3">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        value={supplyAmount}
+                        onChange={(e) => {
+                          if (/^\d*\.?\d*$/.test(e.target.value)) setSupplyAmount(e.target.value);
+                        }}
+                        disabled={txStep !== "idle"}
+                        className="w-full bg-transparent outline-none text-2xl font-semibold text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] mb-2"
+                      />
+                      <div className="flex items-center justify-between text-xs text-[var(--text-tertiary)]">
+                        <span className="flex items-center gap-1">
+                          {isConnected && !isLoading && borrowSymbol && (
+                            <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={14} />
+                          )}
+                          {isConnected && !isLoading
+                            ? `${fmt(walletBalance, borrowDecimals)} ${borrowSymbol}`
+                            : "—"}
+                        </span>
+                        {isConnected && !isLoading && (
+                          <button
+                            onClick={() => setSupplyAmount(formatUnits(walletBalance, borrowDecimals))}
+                            disabled={txStep !== "idle"}
+                            className="text-[var(--accent)] font-semibold hover:underline cursor-pointer"
+                          >
+                            MAX
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4 space-y-2.5">
+                      <div className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2">
+                          <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={18} />
+                          <span className="text-[var(--text-secondary)]">Deposit ({borrowSymbol})</span>
+                        </div>
+                        <span className="text-[var(--text-primary)] font-medium">
+                          {supplyAmount || "0.00"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-secondary)]">APY</span>
+                        <span className="text-[var(--accent)]">{supplyApy.toFixed(2)}%</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-secondary)]">LTV</span>
+                        <span className="text-[var(--text-primary)]">{ltv.toFixed(0)}%</span>
+                      </div>
+                    </div>
+
+                    {errorMsg && (
+                      <div className="mb-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                        {errorMsg}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={handleSupply}
+                      disabled={!isConnected || isLoading || !supplyAmount || Number(supplyAmount) <= 0}
+                      className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                    >
+                      {!isConnected ? "Connect Wallet" : "Deposit"}
+                    </button>
+                  </div>
+                ) : (
+                  <div ref={mobileSidebarContentRef}>
+                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-3">
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        value={withdrawShares}
+                        onChange={(e) => {
+                          if (/^\d*\.?\d*$/.test(e.target.value)) setWithdrawShares(e.target.value);
+                        }}
+                        disabled={wTxStep !== "idle"}
+                        className="w-full bg-transparent outline-none text-2xl font-semibold text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] mb-2"
+                      />
+                      <div className="flex items-center justify-between text-xs text-[var(--text-tertiary)]">
+                        <div className="flex items-center gap-1.5">
+                          {borrowSymbol && <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={16} />}
+                          <span>{isConnected ? `${fmt(sharesBalance, 18)} ${borrowSymbol}` : "—"}</span>
+                        </div>
+                        {isConnected && sharesBalance > 0n && (
+                          <button
+                            onClick={() => setWithdrawShares(formatUnits(sharesBalance, 18))}
+                            disabled={wTxStep !== "idle"}
+                            className="text-[var(--accent)] font-semibold hover:underline cursor-pointer"
+                          >
+                            MAX
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4 space-y-2.5">
+                      <div className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2">
+                          <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={18} />
+                          <span className="text-[var(--text-secondary)]">Withdraw ({borrowSymbol})</span>
+                        </div>
+                        <span className="text-[var(--text-primary)] font-medium">
+                          {withdrawShares || "0.00"}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-secondary)]">APY</span>
+                        <span className="text-[var(--accent)]">{supplyApy.toFixed(2)}%</span>
+                      </div>
+                    </div>
+
+                    {wErrorMsg && (
+                      <div className="mb-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">
+                        {wErrorMsg}
+                      </div>
+                    )}
+
+                    <button
+                      onClick={handleWithdraw}
+                      disabled={!isConnected || !withdrawShares || Number(withdrawShares) <= 0}
+                      className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                    >
+                      {!isConnected ? "Connect Wallet" : "Withdraw"}
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
         </div>
 
-        {/* ──── Right side: Deposit / Withdraw sidebar ──── */}
-        <div ref={rightRef} className="lg:sticky lg:top-6">
+        {/* ──── Right side: Deposit / Withdraw sidebar (desktop only) ──── */}
+        <div ref={rightRef} className="hidden lg:block lg:sticky lg:top-6">
           <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-5">
             {/* Tab selector */}
             <div className="flex mb-5 bg-white/[0.04] rounded-lg p-1">
