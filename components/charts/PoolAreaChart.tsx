@@ -45,13 +45,34 @@ function CustomTooltip({
 }
 
 export default function PoolAreaChart({
-  data,
+  data: rawData,
   dataKey,
   gradientId,
   formatValue,
   yAxisFormatter,
   showAverage,
 }: PoolAreaChartProps) {
+  // Pad single data point so Recharts can draw a line instead of just a dot
+  const data = useMemo(() => {
+    if (rawData.length !== 1) return rawData;
+    const point = rawData[0];
+    const dayBefore = point.timestamp - 86400;
+    const d = new Date(dayBefore * 1000);
+    return [
+      {
+        ...point,
+        timestamp: dayBefore,
+        date: d.toLocaleDateString("en-US", { day: "numeric", month: "short" }),
+        totalDeposits: 0,
+        totalBorrows: 0,
+        totalCollateral: 0,
+        supplyApy: 0,
+        borrowRate: 0,
+      },
+      point,
+    ];
+  }, [rawData]);
+
   const average = useMemo(() => {
     if (!showAverage || data.length === 0) return 0;
     return data.reduce((sum, d) => sum + d[dataKey], 0) / data.length;
