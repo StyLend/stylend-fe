@@ -115,7 +115,7 @@ export default function BorrowDetailPage() {
 
   const { address: userAddress, isConnected } = useAccount();
   const queryClient = useQueryClient();
-  const [activeTab, setActiveTab] = useState<"overview" | "position">("overview");
+  const [activeTab, setActiveTab] = useState<"overview" | "position" | "manage">("overview");
   const [sidebarTab, setSidebarTab] = useState<"collateral" | "borrow" | "repay">("collateral");
   const [collateralAmount, setCollateralAmount] = useState("");
   const [borrowAmount, setBorrowAmount] = useState("");
@@ -141,6 +141,7 @@ export default function BorrowDetailPage() {
   const [btxPage, setBtxPage] = useState(1);
   const [repayToken, setRepayToken] = useState<RepayTokenOption | null>(null);
   const [repayDropdownOpen, setRepayDropdownOpen] = useState(false);
+  const [btxFilterOpen, setBtxFilterOpen] = useState(false);
 
   const leftRef = useRef<HTMLDivElement>(null);
   const rightRef = useRef<HTMLDivElement>(null);
@@ -156,6 +157,12 @@ export default function BorrowDetailPage() {
   const repayDropdownMenuRef = useRef<HTMLDivElement>(null);
   const repayBtnRef = useRef<HTMLButtonElement>(null);
   const repayChevronRef = useRef<SVGSVGElement>(null);
+  const btxFilterRef = useRef<HTMLDivElement>(null);
+  const btxFilterMenuRef = useRef<HTMLDivElement>(null);
+  const btxFilterChevronRef = useRef<SVGSVGElement>(null);
+  const mobileCollateralFormRef = useRef<HTMLDivElement>(null);
+  const mobileBorrowFormRef = useRef<HTMLDivElement>(null);
+  const mobileRepayFormRef = useRef<HTMLDivElement>(null);
   const repayProjectionRef = useRef<HTMLDivElement>(null);
   const repayLoanProjectRef = useRef<HTMLSpanElement>(null);
   const repayHealthProjectRef = useRef<HTMLSpanElement>(null);
@@ -1050,22 +1057,71 @@ export default function BorrowDetailPage() {
     return () => { tl.kill(); };
   }, []);
 
-  // Stagger-animate sidebar form children when switching tabs
+  // Stagger-animate sidebar form children when switching tabs (desktop + mobile)
   useEffect(() => {
-    const target = sidebarTab === "borrow"
+    const desktopTarget = sidebarTab === "borrow"
       ? borrowFormRef.current
       : sidebarTab === "repay"
       ? repayFormRef.current
       : collateralFormRef.current;
-    if (!target) return;
-    const items = target.children;
-    if (!items.length) return;
-    gsap.fromTo(
-      items,
-      { opacity: 0, y: 16 },
-      { opacity: 1, y: 0, duration: 0.4, stagger: 0.07, ease: "power3.out" }
-    );
+    const mobileTarget = sidebarTab === "borrow"
+      ? mobileBorrowFormRef.current
+      : sidebarTab === "repay"
+      ? mobileRepayFormRef.current
+      : mobileCollateralFormRef.current;
+
+    [desktopTarget, mobileTarget].forEach((target) => {
+      if (!target) return;
+      const items = target.children;
+      if (!items.length) return;
+      gsap.fromTo(
+        items,
+        { opacity: 0, y: 16 },
+        { opacity: 1, y: 0, duration: 0.4, stagger: 0.07, ease: "power3.out" }
+      );
+    });
   }, [sidebarTab]);
+
+  // ── Borrow tx filter dropdown (mobile) ──
+  const BTX_FILTERS: { value: BorrowTxFilter; label: string }[] = [
+    { value: "all", label: "All" },
+    { value: "borrow", label: "Borrows" },
+    { value: "repay", label: "Repays" },
+    { value: "supply-collateral", label: "Supply Collateral" },
+    { value: "withdraw-collateral", label: "Withdraw Collateral" },
+  ];
+
+  const closeBtxFilterDropdown = useCallback(() => {
+    const menu = btxFilterMenuRef.current;
+    const chevron = btxFilterChevronRef.current;
+    if (!menu) { setBtxFilterOpen(false); return; }
+    gsap.to(menu, { autoAlpha: 0, y: -8, scaleY: 0.9, duration: 0.2, ease: "power3.in", onComplete: () => setBtxFilterOpen(false) });
+    if (chevron) gsap.to(chevron, { rotation: 0, duration: 0.2, ease: "power3.in" });
+  }, []);
+
+  const toggleBtxFilterDropdown = useCallback(() => {
+    if (btxFilterOpen) closeBtxFilterDropdown();
+    else setBtxFilterOpen(true);
+  }, [btxFilterOpen, closeBtxFilterDropdown]);
+
+  useEffect(() => {
+    if (!btxFilterOpen) return;
+    const menu = btxFilterMenuRef.current;
+    const chevron = btxFilterChevronRef.current;
+    if (!menu) return;
+    gsap.set(menu, { autoAlpha: 0, y: -8, scaleY: 0.9, transformOrigin: "top center" });
+    gsap.to(menu, { autoAlpha: 1, y: 0, scaleY: 1, duration: 0.25, ease: "power3.out" });
+    if (chevron) gsap.to(chevron, { rotation: 180, duration: 0.25, ease: "power3.out" });
+  }, [btxFilterOpen]);
+
+  useEffect(() => {
+    if (!btxFilterOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (btxFilterRef.current && !btxFilterRef.current.contains(e.target as Node)) closeBtxFilterDropdown();
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [btxFilterOpen, closeBtxFilterDropdown]);
 
   // Animate left panel children when switching overview ↔ position tabs
   const isFirstRender = useRef(true);
@@ -1323,17 +1379,19 @@ export default function BorrowDetailPage() {
 
       {/* Tabs */}
       <div className="flex gap-6 border-b border-white/[0.06]">
-        {(["overview", "position"] as const).map((tab) => (
+        {(["overview", "position", "manage"] as const).map((tab) => (
           <button
             key={tab}
             onClick={() => setActiveTab(tab)}
             className={`pb-3 text-sm font-medium capitalize transition-colors cursor-pointer ${
+              tab === "manage" ? "lg:hidden " : ""
+            }${
               activeTab === tab
                 ? "text-[var(--text-primary)] border-b-2 border-[var(--accent)]"
                 : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
             }`}
           >
-            {tab === "position" ? "Your Position" : tab}
+            {tab === "position" ? "Your Position" : tab === "manage" ? "Manage Position" : tab}
           </button>
         ))}
       </div>
@@ -1605,7 +1663,8 @@ export default function BorrowDetailPage() {
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <h3 className="text-lg font-semibold text-[var(--text-primary)]">All transactions</h3>
-                  <div className="flex items-center gap-1.5 flex-wrap">
+                  {/* Desktop filter buttons */}
+                  <div className="hidden md:flex items-center gap-1.5 flex-wrap">
                     {(["all", "borrow", "repay", "supply-collateral", "withdraw-collateral"] as const).map((f) => (
                       <button
                         key={f}
@@ -1620,11 +1679,43 @@ export default function BorrowDetailPage() {
                       </button>
                     ))}
                   </div>
+                  {/* Mobile: custom GSAP dropdown */}
+                  <div ref={btxFilterRef} className="relative md:hidden">
+                    <button
+                      onClick={toggleBtxFilterDropdown}
+                      className="flex items-center gap-2 px-3 py-2 rounded-xl bg-[rgba(8,12,28,0.65)] border border-white/[0.08] text-sm font-medium text-[var(--text-primary)] cursor-pointer active:scale-[0.98] transition-transform"
+                    >
+                      {BTX_FILTERS.find((f) => f.value === btxFilter)?.label}
+                      <svg ref={btxFilterChevronRef} width="14" height="14" viewBox="0 0 16 16" fill="none" className="text-[var(--text-tertiary)]">
+                        <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </button>
+                    {btxFilterOpen && (
+                      <div
+                        ref={btxFilterMenuRef}
+                        className="absolute right-0 top-[calc(100%+6px)] z-30 min-w-[160px] py-1.5 rounded-xl bg-[rgba(8,12,28,0.95)] backdrop-blur-xl border border-white/[0.08] shadow-[0_8px_32px_rgba(0,0,0,0.5)]"
+                      >
+                        {BTX_FILTERS.map((f) => (
+                          <button
+                            key={f.value}
+                            onClick={() => { setBtxFilter(f.value); closeBtxFilterDropdown(); }}
+                            className={`w-full text-left px-4 py-2.5 text-sm transition-colors cursor-pointer ${
+                              btxFilter === f.value
+                                ? "text-[var(--text-primary)] bg-white/[0.08]"
+                                : "text-[var(--text-secondary)] active:bg-white/[0.05]"
+                            }`}
+                          >
+                            {f.label}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div ref={btxTableRef} className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-2xl overflow-hidden">
-                  {/* Header */}
-                  <div className="grid grid-cols-[1.5fr_1.2fr_2fr_1.5fr_1.5fr] px-6 py-3 border-b border-white/[0.06] text-xs text-[var(--text-tertiary)] font-medium">
+                  {/* Header — desktop only */}
+                  <div className="hidden md:grid grid-cols-[1.5fr_1.2fr_2fr_1.5fr_1.5fr] px-6 py-3 border-b border-white/[0.06] text-xs text-[var(--text-tertiary)] font-medium">
                     <span className="flex items-center gap-1">
                       Date
                       <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
@@ -1640,12 +1731,11 @@ export default function BorrowDetailPage() {
                   {/* Rows */}
                   {btxLoading ? (
                     Array.from({ length: 5 }).map((_, i) => (
-                      <div key={i} className="grid grid-cols-[1.5fr_1.2fr_2fr_1.5fr_1.5fr] items-center px-6 py-4 border-b border-white/[0.06] last:border-b-0">
-                        <Skeleton className="h-4 w-32" />
-                        <Skeleton className="h-4 w-24" />
-                        <Skeleton className="h-4 w-36" />
-                        <Skeleton className="h-4 w-28" />
-                        <Skeleton className="h-4 w-28 ml-auto" />
+                      <div key={i} className="px-4 md:px-6 py-4 border-b border-white/[0.06] last:border-b-0">
+                        <div className="flex items-center justify-between">
+                          <Skeleton className="h-4 w-20" />
+                          <Skeleton className="h-4 w-28" />
+                        </div>
                       </div>
                     ))
                   ) : paginatedBtx.length === 0 ? (
@@ -1674,11 +1764,12 @@ export default function BorrowDetailPage() {
                           : amount.toFixed(2);
 
                       const date = new Date(tx.timestamp * 1000);
-                      const dateStr =
+                      const datePart =
                         date.getFullYear() +
                         "-" + String(date.getMonth() + 1).padStart(2, "0") +
-                        "-" + String(date.getDate()).padStart(2, "0") +
-                        " " + String(date.getHours()).padStart(2, "0") +
+                        "-" + String(date.getDate()).padStart(2, "0");
+                      const timePart =
+                        String(date.getHours()).padStart(2, "0") +
                         ":" + String(date.getMinutes()).padStart(2, "0") +
                         ":" + String(date.getSeconds()).padStart(2, "0");
 
@@ -1691,51 +1782,76 @@ export default function BorrowDetailPage() {
                       return (
                         <div
                           key={tx.id}
-                          className="btx-row grid grid-cols-[1.5fr_1.2fr_2fr_1.5fr_1.5fr] items-center px-6 py-4 border-b border-white/[0.06] last:border-b-0 hover:bg-white/[0.03] transition-colors"
+                          className="btx-row border-b border-white/[0.12] md:border-white/[0.06] last:border-b-0 hover:bg-white/[0.03] transition-colors"
                         >
-                          {/* Date */}
-                          <span className="text-sm text-[var(--text-secondary)]">{dateStr}</span>
-
-                          {/* Type */}
-                          <span className="text-sm text-[var(--text-primary)]">{typeLabel}</span>
-
-                          {/* Amount */}
-                          <div className="flex items-center gap-2">
-                            <TokenIcon symbol={symbol} color={getTokenColor(symbol)} size={20} />
-                            <span className="text-sm font-medium text-[var(--text-primary)]">
-                              {fmtAmount} {symbol}
-                            </span>
-                            {price > 0 && (
-                              <span className="text-[10px] text-[var(--text-tertiary)] bg-white/[0.06] px-1.5 py-0.5 rounded">
-                                {fmtUsd}
+                          {/* Mobile */}
+                          <div className="md:hidden px-4 py-3 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-sm font-medium text-[var(--text-primary)]">{typeLabel}</span>
+                              <span className="text-xs text-[var(--text-tertiary)]">
+                                {datePart} <span className="opacity-60">{timePart}</span>
                               </span>
-                            )}
+                            </div>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-1.5">
+                                <TokenIcon symbol={symbol} color={getTokenColor(symbol)} size={18} />
+                                <span className="text-sm font-medium text-[var(--text-primary)]">
+                                  {fmtAmount} {symbol}
+                                </span>
+                                {price > 0 && (
+                                  <span className="text-[10px] text-[var(--text-tertiary)] bg-white/[0.06] px-1.5 py-0.5 rounded">
+                                    {fmtUsd}
+                                  </span>
+                                )}
+                              </div>
+                              <a
+                                href={`${CHAIN.blockExplorers?.default.url}/tx/${tx.txHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1 text-xs font-mono text-[var(--text-tertiary)] hover:text-[var(--text-primary)] transition-colors"
+                              >
+                                {shortenAddr(tx.txHash)}
+                                <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M4 1h7v7M11 1L1 11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                              </a>
+                            </div>
                           </div>
-
-                          {/* User */}
-                          <div className="flex items-center gap-2">
-                            <div
-                              className="w-5 h-5 rounded-full flex-shrink-0"
-                              style={{ background: addressToGradient(tx.user) }}
-                            />
-                            <span className="text-sm font-mono text-[var(--text-secondary)]">
-                              {shortenAddr(tx.user)}
-                            </span>
-                          </div>
-
-                          {/* Transaction */}
-                          <div className="flex items-center justify-end gap-1.5">
-                            <a
-                              href={`${CHAIN.blockExplorers?.default.url}/tx/${tx.txHash}`}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-1.5 text-sm font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
-                            >
-                              {shortenAddr(tx.txHash)}
-                              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="flex-shrink-0">
-                                <path d="M4 1h7v7M11 1L1 11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                            </a>
+                          {/* Desktop */}
+                          <div className="hidden md:grid grid-cols-[1.5fr_1.2fr_2fr_1.5fr_1.5fr] items-center px-6 py-4">
+                            <span className="text-sm text-[var(--text-secondary)]">{datePart} {timePart}</span>
+                            <span className="text-sm text-[var(--text-primary)]">{typeLabel}</span>
+                            <div className="flex items-center gap-2">
+                              <TokenIcon symbol={symbol} color={getTokenColor(symbol)} size={20} />
+                              <span className="text-sm font-medium text-[var(--text-primary)]">
+                                {fmtAmount} {symbol}
+                              </span>
+                              {price > 0 && (
+                                <span className="text-[10px] text-[var(--text-tertiary)] bg-white/[0.06] px-1.5 py-0.5 rounded">
+                                  {fmtUsd}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <div
+                                className="w-5 h-5 rounded-full flex-shrink-0"
+                                style={{ background: addressToGradient(tx.user) }}
+                              />
+                              <span className="text-sm font-mono text-[var(--text-secondary)]">
+                                {shortenAddr(tx.user)}
+                              </span>
+                            </div>
+                            <div className="flex items-center justify-end gap-1.5">
+                              <a
+                                href={`${CHAIN.blockExplorers?.default.url}/tx/${tx.txHash}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="flex items-center gap-1.5 text-sm font-mono text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
+                              >
+                                {shortenAddr(tx.txHash)}
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" className="flex-shrink-0">
+                                  <path d="M4 1h7v7M11 1L1 11" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                              </a>
+                            </div>
                           </div>
                         </div>
                       );
@@ -1771,7 +1887,7 @@ export default function BorrowDetailPage() {
                 )}
               </div>
             </>
-          ) : (
+          ) : activeTab === "position" ? (
             /* Position tab */
             <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-6">
               {!isConnected ? (
@@ -1863,11 +1979,429 @@ export default function BorrowDetailPage() {
                 </div>
               )}
             </div>
+          ) : (
+            /* Manage Position tab (mobile only) */
+            <div className="lg:hidden">
+              <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-5">
+                {/* Tab selector */}
+                <div className="flex mb-5 bg-white/[0.04] rounded-lg p-1">
+                  {(["collateral", "borrow", "repay"] as const).map((tab) => (
+                    <button
+                      key={tab}
+                      onClick={() => { setSidebarTab(tab); resetTx(); resetWcTx(); }}
+                      className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors cursor-pointer ${
+                        sidebarTab === tab
+                          ? "bg-white/[0.08] text-[var(--text-primary)] shadow-sm"
+                          : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
+                      }`}
+                    >
+                      {tab === "collateral" ? "Supply" : tab === "borrow" ? "Borrow" : "Repay"}
+                    </button>
+                  ))}
+                </div>
+
+                {isLoading ? (
+                  <div className="space-y-3">
+                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 space-y-3">
+                      <Skeleton className="h-8 w-full" />
+                      <div className="flex items-center justify-between">
+                        <Skeleton className="h-3 w-24" />
+                        <Skeleton className="h-3 w-10" />
+                      </div>
+                    </div>
+                    <Skeleton className="h-12 w-full rounded-xl" />
+                  </div>
+                ) : sidebarTab === "collateral" ? (
+                  <div ref={mobileCollateralFormRef}>
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-sm font-semibold text-[var(--text-primary)]">Supply {collateralSymbol}</span>
+                      <TokenIcon symbol={collateralSymbol} color={getTokenColor(collateralSymbol)} size={24} />
+                    </div>
+                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-3">
+                      <input type="text" inputMode="decimal" placeholder="0.00" value={collateralAmount}
+                        onChange={(e) => { if (/^\d*\.?\d*$/.test(e.target.value)) setCollateralAmount(e.target.value); }}
+                        disabled={txStep !== "idle"}
+                        className="w-full bg-transparent outline-none text-2xl font-semibold text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] mb-2"
+                      />
+                      <div className="flex items-center justify-between text-xs text-[var(--text-tertiary)]">
+                        <span>{isConnected && !isLoading ? `${fmt(walletCollateralBalance, collateralDecimals)} ${collateralSymbol}` : "—"}</span>
+                        {isConnected && !isLoading && (
+                          <button onClick={() => setCollateralAmount(formatUnits(walletCollateralBalance, collateralDecimals))} disabled={txStep !== "idle"}
+                            className="text-[var(--accent)] font-semibold hover:underline cursor-pointer">MAX</button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4 space-y-2.5">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-secondary)]">LTV</span>
+                        <span className="text-[var(--text-primary)]">{ltv.toFixed(0)}%</span>
+                      </div>
+                    </div>
+                    {errorMsg && (
+                      <div className="mb-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">{errorMsg}</div>
+                    )}
+                    <button
+                      onClick={() => {
+                        if (!userAddress || !collateralTokenAddr || !collateralAmount) return;
+                        const amt = parseUnits(collateralAmount, collateralDecimals);
+                        if (amt <= 0n) return;
+                        if (amt > walletCollateralBalance) { setErrorMsg("Insufficient balance"); return; }
+                        setErrorMsg(""); setShowConfirmModal(true);
+                      }}
+                      disabled={txStep !== "idle" || !isConnected || isLoading || !collateralAmount || Number(collateralAmount) <= 0}
+                      className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                    >
+                      {!isConnected ? "Connect Wallet" : !collateralAmount || Number(collateralAmount) <= 0 ? "Enter an amount" : "Supply Collateral"}
+                    </button>
+                  </div>
+                ) : sidebarTab === "borrow" ? (
+                  /* ── Borrow tab (mobile — full, matches desktop) ── */
+                  <div ref={mobileBorrowFormRef}>
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-sm font-semibold text-[var(--text-primary)]">Borrow {borrowSymbol}</span>
+                      <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={24} />
+                    </div>
+
+                    {/* Cross-chain toggle */}
+                    <div className="mb-4 relative z-10">
+                      <button
+                        onClick={() => { setCrossChainEnabled(!crossChainEnabled); if (crossChainEnabled) { setDestChain(null); setChainDropdownOpen(false); } }}
+                        disabled={txStep !== "idle"}
+                        className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg border transition-colors cursor-pointer"
+                        style={{
+                          backgroundColor: isCrossChain ? "rgba(59,130,246,0.08)" : "var(--bg-secondary)",
+                          borderColor: isCrossChain ? "rgba(59,130,246,0.3)" : "var(--border)",
+                        }}
+                      >
+                        <span className="text-xs font-medium text-[var(--text-primary)]">Borrow to Another Chain</span>
+                        <div className={`relative w-9 h-5 rounded-full transition-colors ${isCrossChain ? "bg-blue-500" : "bg-[var(--bg-tertiary)]"}`}>
+                          <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${isCrossChain ? "translate-x-4" : "translate-x-0.5"}`} />
+                        </div>
+                      </button>
+
+                      {isCrossChain && (
+                        <div className="mt-2 space-y-1.5">
+                          <div ref={chainDropdownRef} className="relative z-50">
+                            <button
+                              onClick={() => setChainDropdownOpen(!chainDropdownOpen)}
+                              disabled={txStep !== "idle"}
+                              className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg bg-[rgba(8,12,28,0.5)] border border-white/[0.06] text-xs font-medium text-[var(--text-primary)] transition-all cursor-pointer hover:border-blue-500/40 focus:border-blue-500/50 outline-none"
+                            >
+                              {destChain ? (
+                                <Image src={destChain.logo} alt={destChain.name} width={20} height={20} className="rounded-full shrink-0" />
+                              ) : (
+                                <div className="w-5 h-5 rounded-full bg-[var(--bg-tertiary)] shrink-0" />
+                              )}
+                              <span className={`flex-1 text-left ${!destChain ? "text-[var(--text-tertiary)]" : ""}`}>{destChain?.name ?? "Select chain"}</span>
+                              <svg width="12" height="12" viewBox="0 0 12 12" fill="none"
+                                className={`text-[var(--text-tertiary)] transition-transform duration-200 ${chainDropdownOpen ? "rotate-180" : ""}`}>
+                                <path d="M3 4.5l3 3 3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                              </svg>
+                            </button>
+                            {chainDropdownOpen && (
+                              <div className="absolute z-50 top-[calc(100%+4px)] left-0 w-full bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-lg shadow-xl overflow-hidden origin-top">
+                                {DEST_CHAINS.map((chain) => (
+                                  <button key={chain.name}
+                                    onClick={() => { if (chain.soon) return; setDestChain(chain); setChainDropdownOpen(false); }}
+                                    disabled={chain.soon}
+                                    className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-xs font-medium transition-colors ${
+                                      chain.soon ? "opacity-50 cursor-not-allowed"
+                                        : destChain?.eid === chain.eid ? "bg-blue-500/10 text-blue-400 cursor-pointer"
+                                        : "text-[var(--text-primary)] hover:bg-white/[0.05] cursor-pointer"
+                                    }`}>
+                                    <Image src={chain.logo} alt={chain.name} width={20} height={20} className="rounded-full shrink-0" />
+                                    <span className="flex-1 text-left">{chain.name}</span>
+                                    {chain.soon && <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-blue-500/15 text-blue-400">Soon</span>}
+                                    {!chain.soon && destChain?.eid === chain.eid && (
+                                      <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M3.5 7l2.5 2.5 4.5-5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+                                    )}
+                                  </button>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          {!oftConfigured && factoryAddr && (
+                            <p className="text-[10px] text-red-400 px-1">OFT adapter not configured for {borrowSymbol}</p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Amount input */}
+                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-3">
+                      <input type="text" inputMode="decimal" placeholder="0.00" value={borrowAmount}
+                        onChange={(e) => { if (/^\d*\.?\d*$/.test(e.target.value)) setBorrowAmount(e.target.value); }}
+                        disabled={txStep !== "idle"}
+                        className="w-full bg-transparent outline-none text-2xl font-semibold text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] mb-2"
+                      />
+                      <div className="flex items-center justify-between text-xs text-[var(--text-tertiary)]">
+                        <span>{!isLoading && liquidity !== undefined ? `Available: ${fmt(liquidity, borrowDecimals)} ${borrowSymbol}` : "—"}</span>
+                      </div>
+                    </div>
+
+                    {/* Info rows */}
+                    <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4 space-y-2.5">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-secondary)]">Borrow APY</span>
+                        <span className="text-[var(--accent)]">{borrowApy.toFixed(2)}%</span>
+                      </div>
+                      {hasPosition && positionCollateralBalance && (
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-[var(--text-secondary)]">Max Borrowable</span>
+                          <span className="text-[var(--text-primary)]">{fmt(maxBorrowable, borrowDecimals)} {borrowSymbol}</span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-[var(--text-secondary)]">LTV</span>
+                        <span className="text-[var(--text-primary)]">{ltv.toFixed(0)}%</span>
+                      </div>
+                      {hasPosition && userBorrowAmount > 0n && (
+                        <div className="flex items-center justify-between text-sm">
+                          <span className="text-[var(--text-secondary)]">Health Factor</span>
+                          <span className={healthFactor >= 1.5 ? "text-green-400" : healthFactor >= 1.1 ? "text-yellow-400" : "text-red-400"}>
+                            {healthFactor === Infinity ? "∞" : healthFactor.toFixed(2)}
+                          </span>
+                        </div>
+                      )}
+                      {borrowAmount && Number(borrowAmount) > 0 && collateralValueUsd > 0 && borrowPrice > 0n && (() => {
+                        const newBorrowValueUsd = borrowValueUsd + Number(borrowAmount) * Number(formatUnits(borrowPrice, borrowPriceDec));
+                        const projectedHf = newBorrowValueUsd > 0 ? collateralValueUsd / newBorrowValueUsd : Infinity;
+                        return (
+                          <div className="flex items-center justify-between text-sm">
+                            <span className="text-[var(--text-secondary)]">New Health Factor</span>
+                            <span className={projectedHf >= 1.5 ? "text-green-400" : projectedHf >= 1.1 ? "text-yellow-400" : "text-red-400"}>
+                              {projectedHf === Infinity ? "∞" : projectedHf.toFixed(2)}
+                            </span>
+                          </div>
+                        );
+                      })()}
+                    </div>
+
+                    {errorMsg && (
+                      <div className="mb-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">{errorMsg}</div>
+                    )}
+
+                    <button
+                      onClick={() => {
+                        if (!userAddress || !borrowAmount) return;
+                        const amt = parseUnits(borrowAmount, borrowDecimals);
+                        if (amt <= 0n) return;
+                        if (liquidity !== undefined && amt > liquidity) { setErrorMsg("Exceeds available liquidity"); return; }
+                        if (amt > maxBorrowable + userBorrowAmount) { setErrorMsg("Exceeds maximum borrowable amount based on your collateral and LTV"); return; }
+                        if (!hasPosition || !positionCollateralBalance || positionCollateralBalance === 0n) { setErrorMsg("Supply collateral first before borrowing"); return; }
+                        if (isCrossChain && (!destChain || !oftConfigured)) return;
+                        setErrorMsg(""); setShowBorrowModal(true);
+                      }}
+                      disabled={txStep !== "idle" || !isConnected || isLoading || !borrowAmount || Number(borrowAmount) <= 0 || (isCrossChain && (!destChain || !oftConfigured || lzNativeFee === 0n))}
+                      className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                    >
+                      {!isConnected ? "Connect Wallet"
+                        : isCrossChain && !destChain ? "Select a destination chain"
+                        : isCrossChain && !oftConfigured ? "OFT Not Configured"
+                        : !borrowAmount || Number(borrowAmount) <= 0 ? "Enter an amount"
+                        : isCrossChain && lzNativeFee === 0n && crossChainParsedAmount > 0n ? "Estimating Fee..."
+                        : isCrossChain && destChain ? `Borrow to ${destChain.name}`
+                        : "Borrow"}
+                    </button>
+                  </div>
+                ) : (
+                  /* ── Repay tab (mobile — full, matches desktop) ── */
+                  <div ref={mobileRepayFormRef}>
+                    {(rlTxStep === "success" || wcTxStep === "success") ? (
+                      <div className="text-center py-6">
+                        <div className="mb-3 mx-auto w-fit"><AnimatedCheckmark /></div>
+                        <p className="text-[var(--text-primary)] font-medium mb-1">
+                          {rlTxStep === "success" ? "Repay Successful!" : "Withdraw Successful!"}
+                        </p>
+                        <p className="text-xs text-[var(--text-tertiary)] mb-4">
+                          {rlTxStep === "success" ? "Your loan has been repaid." : "Collateral has been returned to your wallet."}
+                        </p>
+                        <button onClick={() => { resetRlTx(); resetWcTx(); }}
+                          className="w-full py-2.5 rounded-lg bg-[var(--accent)] hover:bg-[var(--accent-light)] text-[var(--bg-primary)] text-sm font-semibold transition-colors cursor-pointer">
+                          Done
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        {/* Repay Loan input card */}
+                        <div className="relative z-10 bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4">
+                          <div className="flex items-center justify-between mb-3">
+                            <span className="text-sm font-semibold text-[var(--text-primary)]">Repay Loan</span>
+                            {/* Token selector */}
+                            <div className="relative">
+                              <button
+                                onClick={() => setRepayDropdownOpen((v) => !v)}
+                                disabled={rlTxStep !== "idle"}
+                                className="flex items-center gap-1.5 px-2 py-1 rounded-lg border border-white/[0.06] hover:border-white/[0.15] transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                              >
+                                {(activeRepayToken?.symbol || borrowSymbol) ? (
+                                  <TokenIcon symbol={activeRepayToken?.symbol || borrowSymbol} color={getTokenColor(activeRepayToken?.symbol || borrowSymbol)} size={20} />
+                                ) : (
+                                  <div className="w-5 h-5 rounded-full bg-[var(--bg-tertiary)] animate-pulse" />
+                                )}
+                                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                                  <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-[var(--text-tertiary)]" />
+                                </svg>
+                              </button>
+                              {repayDropdownOpen && (
+                                <div className="absolute right-0 top-full mt-1 w-56 bg-[rgba(12,16,32,0.95)] backdrop-blur-lg border border-white/[0.1] rounded-xl shadow-2xl overflow-hidden z-50">
+                                  {repayTokenOptions.map((opt) => {
+                                    const isActive = activeRepayToken?.address?.toLowerCase() === opt.address.toLowerCase();
+                                    const bal = getRepayTokenBalance(opt);
+                                    return (
+                                      <button key={opt.address}
+                                        onClick={() => { setRepayToken(opt); setRepayLoanAmount(""); setRepayDropdownOpen(false); }}
+                                        className={`w-full flex items-center gap-3 px-3 py-2.5 transition-colors cursor-pointer ${
+                                          isActive ? "bg-[var(--accent-glow)] border-l-2 border-l-[var(--accent)]" : "hover:bg-white/[0.05] border-l-2 border-l-transparent"
+                                        }`}>
+                                        <TokenIcon symbol={opt.symbol} color={getTokenColor(opt.symbol)} size={24} />
+                                        <div className="flex-1 text-left">
+                                          <div className="text-sm font-medium text-[var(--text-primary)]">{opt.symbol}</div>
+                                          <div className="text-xs text-[var(--text-tertiary)]">{opt.isCollateral ? "Collateral" : "Wallet"}</div>
+                                        </div>
+                                        <span className="text-xs text-[var(--text-secondary)]">{fmt(bal, opt.decimals)}</span>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          <input type="text" inputMode="decimal" placeholder="0.00" value={repayLoanAmount}
+                            onChange={(e) => { if (/^\d*\.?\d*$/.test(e.target.value)) setRepayLoanAmount(e.target.value); }}
+                            disabled={rlTxStep !== "idle"}
+                            className="w-full bg-transparent outline-none text-2xl font-semibold text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] mb-2"
+                          />
+                          <div className="flex items-center justify-between text-xs text-[var(--text-tertiary)]">
+                            <span>{repayInputUsd > 0 ? `$${repayInputUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : "$0.00"}</span>
+                            <div className="flex items-center gap-2">
+                              <span>{isConnected && !isLoading ? `${fmt(repaySelectedBalance, repaySelectedDecimals)} ${repaySelectedSymbol}` : "—"}</span>
+                              {isConnected && !isLoading && isRepayWithBorrowToken && userBorrowAmount > 0n && (
+                                <button
+                                  onClick={() => { const max = walletBorrowBalance < userBorrowAmount ? walletBorrowBalance : userBorrowAmount; setRepayLoanAmount(formatUnits(max, borrowDecimals)); }}
+                                  disabled={rlTxStep !== "idle"}
+                                  className="px-2 py-0.5 rounded border border-white/[0.06] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--text-tertiary)] transition-colors cursor-pointer font-semibold"
+                                >MAX</button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Withdraw Collateral input card */}
+                        <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4">
+                          <div className="flex items-center justify-between mb-3">
+                            <span className="text-sm font-semibold text-[var(--text-primary)]">Withdraw Collateral {collateralSymbol}</span>
+                            <TokenIcon symbol={collateralSymbol} color={getTokenColor(collateralSymbol)} size={24} />
+                          </div>
+                          <input type="text" inputMode="decimal" placeholder="0.00" value={withdrawColAmount}
+                            onChange={(e) => { if (/^\d*\.?\d*$/.test(e.target.value)) setWithdrawColAmount(e.target.value); }}
+                            disabled={wcTxStep !== "idle"}
+                            className="w-full bg-transparent outline-none text-2xl font-semibold text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] mb-2"
+                          />
+                          <div className="flex items-center justify-between text-xs text-[var(--text-tertiary)]">
+                            <span>{withdrawColAmount && Number(withdrawColAmount) > 0 && collateralPrice > 0n
+                              ? `$${(Number(withdrawColAmount) * Number(formatUnits(collateralPrice, collateralPriceDec))).toLocaleString("en-US", { minimumFractionDigits: 0, maximumFractionDigits: 0 })}`
+                              : "$0"}</span>
+                            <div className="flex items-center gap-2">
+                              <span>{isConnected && !isLoading && positionCollateralBalance !== undefined ? `${fmt(positionCollateralBalance as bigint, collateralDecimals)} ${collateralSymbol}` : "—"}</span>
+                              {isConnected && !isLoading && positionCollateralBalance && positionCollateralBalance > 0n && (
+                                <button onClick={() => setWithdrawColAmount(formatUnits(positionCollateralBalance, collateralDecimals))} disabled={wcTxStep !== "idle"}
+                                  className="px-2 py-0.5 rounded border border-white/[0.06] text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:border-[var(--text-tertiary)] transition-colors cursor-pointer font-semibold"
+                                >MAX</button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Combined info/projection card */}
+                        {(() => {
+                          const hasRepayInput = repayInputUsd > 0;
+                          return (
+                            <div className="bg-[rgba(8,12,28,0.5)] border border-white/[0.06] rounded-xl p-4 mb-4 space-y-3">
+                              <div className="flex items-center justify-between text-sm">
+                                <div className="flex items-center gap-2">
+                                  <TokenIcon symbol={collateralSymbol} color={getTokenColor(collateralSymbol)} size={20} />
+                                  <span className="text-[var(--text-secondary)]">Collateral ({collateralSymbol})</span>
+                                </div>
+                                <span className="text-[var(--text-primary)] font-medium">{positionCollateralBalance ? fmt(positionCollateralBalance, collateralDecimals) : "0.00"}</span>
+                              </div>
+                              <div className="flex items-center justify-between text-sm">
+                                <div className="flex items-center gap-2">
+                                  <TokenIcon symbol={borrowSymbol} color={getTokenColor(borrowSymbol)} size={20} />
+                                  <span className="text-[var(--text-secondary)]">Loan ({borrowSymbol})</span>
+                                </div>
+                                <div className="flex items-center gap-1.5">
+                                  <span className="text-[var(--text-primary)] font-medium">{fmt(userBorrowAmount, borrowDecimals)}</span>
+                                  {hasRepayInput && (
+                                    <span className="flex items-center gap-1.5">
+                                      <span className="text-[var(--text-tertiary)]">&rarr;</span>
+                                      <span className="text-[var(--success)] font-medium">{repayLoanProjectionStr}</span>
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex items-center justify-between text-sm">
+                                <span className="text-[var(--text-secondary)]">Health Factor</span>
+                                <div className="flex items-center gap-1.5">
+                                  <span className={`font-medium ${healthFactor < 1.2 ? "text-[var(--danger)]" : healthFactor < 2 ? "text-[var(--warning)]" : "text-[var(--text-primary)]"}`}>
+                                    {healthFactor === Infinity ? "∞" : healthFactor.toFixed(2)}
+                                  </span>
+                                  {hasRepayInput && (
+                                    <span className="flex items-center gap-1.5">
+                                      <span className="text-[var(--text-tertiary)]">&rarr;</span>
+                                      <span className="text-[var(--success)] font-medium">{repayHealthProjectionStr}</span>
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                              <div className="flex items-center justify-between text-sm">
+                                <span className="text-[var(--text-secondary)]">Rate</span>
+                                <span className="text-[var(--text-primary)]">{borrowApy.toFixed(2)}%</span>
+                              </div>
+                            </div>
+                          );
+                        })()}
+
+                        {rlErrorMsg && (
+                          <div className="mb-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">{rlErrorMsg}</div>
+                        )}
+                        {wcErrorMsg && (
+                          <div className="mb-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-xs">{wcErrorMsg}</div>
+                        )}
+
+                        <button
+                          onClick={() => {
+                            const hasRepay = repayLoanAmount && Number(repayLoanAmount) > 0;
+                            const hasWithdraw = withdrawColAmount && Number(withdrawColAmount) > 0;
+                            if (hasRepay) handleRepayLoan();
+                            else if (hasWithdraw) handleWithdrawCollateral();
+                          }}
+                          disabled={
+                            (rlTxStep !== "idle" && wcTxStep !== "idle") || !isConnected || isLoading ||
+                            ((!repayLoanAmount || Number(repayLoanAmount) <= 0) && (!withdrawColAmount || Number(withdrawColAmount) <= 0))
+                          }
+                          className="w-full py-3 rounded-xl bg-[var(--accent)] hover:bg-[var(--accent-light)] disabled:opacity-40 disabled:cursor-not-allowed text-[var(--bg-primary)] font-semibold text-sm transition-colors cursor-pointer"
+                        >
+                          {!isConnected ? "Connect Wallet"
+                            : rlTxStep === "approving" ? "Approving..."
+                            : rlTxStep === "repaying" ? "Repaying..."
+                            : wcTxStep === "withdrawing" ? "Withdrawing..."
+                            : isLoading ? "Loading..."
+                            : repayLoanAmount && Number(repayLoanAmount) > 0 ? "Repay Loan"
+                            : withdrawColAmount && Number(withdrawColAmount) > 0 ? "Withdraw Collateral"
+                            : "Enter an amount"}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
           )}
         </div>
 
-        {/* ──── Right side: Supply Collateral / Borrow sidebar ──── */}
-        <div ref={rightRef} className="lg:sticky lg:top-6">
+        {/* ──── Right side: Supply Collateral / Borrow sidebar (desktop only) ──── */}
+        <div ref={rightRef} className="hidden lg:block lg:sticky lg:top-6">
           <div className="bg-[rgba(8,12,28,0.65)] backdrop-blur-md border border-white/[0.08] rounded-xl p-5">
             {/* Sidebar tab selector */}
             <div className="flex mb-5 bg-white/[0.04] rounded-lg p-1">
