@@ -51,7 +51,7 @@ export default function Header() {
         <h1 key={pathname} ref={titleRef} className="text-lg sm:text-2xl font-bold text-[var(--text-primary)] font-panchang whitespace-nowrap">{title}</h1>
       </div>
 
-      <div ref={actionsRef} className="flex items-center gap-3 shrink-0">
+      <div ref={actionsRef} className={`flex items-center gap-3 shrink-0${pathname === "/trade-collateral" || pathname === "/faucet" ? " invisible pointer-events-none sm:visible sm:pointer-events-auto" : ""}`}>
         <ConnectWalletButton />
       </div>
     </header>

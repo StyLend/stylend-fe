@@ -47,7 +47,7 @@ const FAUCET_TOKENS = [
 
 export default function FaucetPage() {
   const cardRef = useRef<HTMLDivElement>(null);
-  const rowRefs = useRef<(HTMLTableRowElement | null)[]>([]);
+  const rowRefs = useRef<(HTMLElement | null)[]>([]);
   const { address, isConnected, chain, status } = useAccount();
   const [mintingToken, setMintingToken] = useState<string | null>(null);
   const isLoading = status === "connecting" || status === "reconnecting";
@@ -153,12 +153,57 @@ export default function FaucetPage() {
           </div>
         )}
 
-        {/* Token table (blurred when not connected) */}
+        {/* Token list (blurred when not connected) */}
         {!isLoading && (
           <div className="relative">
-            {/* Table */}
-            <div className={`overflow-x-auto ${!isConnected ? "blur-[6px] select-none pointer-events-none" : ""}`}>
-              <table className="w-full table-fixed">
+            <div className={!isConnected ? "blur-[6px] select-none pointer-events-none" : ""}>
+
+              {/* ── Mobile card layout ── */}
+              <div className="md:hidden">
+                {FAUCET_TOKENS.map((token, index) => (
+                  <div
+                    key={token.symbol}
+                    ref={(el) => { rowRefs.current[index] = el; }}
+                    className="px-4 py-4 border-b border-white/[0.08] last:border-b-0"
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <div className="flex items-center gap-3">
+                        <TokenIcon symbol={token.symbol} color={token.color} size={36} />
+                        <div>
+                          <div className="font-semibold text-[var(--text-primary)]">{token.symbol}</div>
+                          <div className="text-xs text-[var(--text-tertiary)]">{token.name}</div>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleMint(token)}
+                        disabled={isBusy || isWrongNetwork}
+                        className="px-5 py-2 rounded-lg bg-[var(--accent)] hover:bg-[var(--accent-light)] disabled:opacity-50 disabled:cursor-not-allowed text-[var(--bg-primary)] text-sm font-semibold transition-colors cursor-pointer"
+                      >
+                        {isBusy && mintingToken === token.symbol
+                          ? isConfirming ? "Confirming..." : "Minting..."
+                          : "Claim"}
+                      </button>
+                    </div>
+                    <div className="flex items-center justify-between pt-2 border-t border-white/[0.04]">
+                      <div>
+                        <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider block mb-0.5">Balance</span>
+                        <span className="text-sm font-medium text-[var(--text-primary)]">
+                          {isConnected ? getBalance(index, token.decimals) : "—"}
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[10px] text-[var(--text-tertiary)] uppercase tracking-wider block mb-0.5">Mint Amount</span>
+                        <span className="text-sm font-medium text-[var(--text-primary)]">
+                          {token.mintAmount} {token.symbol}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* ── Desktop table ── */}
+              <table className="hidden md:table w-full table-fixed">
                 <colgroup>
                   <col className="w-[30%]" />
                   <col className="w-[25%]" />
@@ -177,7 +222,6 @@ export default function FaucetPage() {
                   {FAUCET_TOKENS.map((token, index) => (
                     <tr
                       key={token.symbol}
-                      ref={(el) => { rowRefs.current[index] = el; }}
                       className="border-b border-white/[0.06] last:border-b-0 hover:bg-white/[0.05] transition-colors"
                     >
                       <td className="px-6 py-4">
@@ -218,29 +262,28 @@ export default function FaucetPage() {
               </table>
             </div>
 
+            {/* Connect wallet overlay — centered on blurred content */}
+            {!isConnected && (
+              <div className="absolute inset-0 z-10 flex items-center justify-center p-4">
+                <div className="flex flex-col items-center gap-5 bg-[rgba(8,12,28,0.75)] backdrop-blur-lg border border-white/[0.08] rounded-2xl w-full max-w-sm px-8 py-8">
+                  <Image
+                    src="/stylend-logo-blue.webp"
+                    alt="Stylend"
+                    width={48}
+                    height={48}
+                    className="rounded-full"
+                  />
+                  <div className="text-center">
+                    <h3 className="text-base font-semibold text-[var(--text-primary)] mb-1">Connect your wallet</h3>
+                    <p className="text-sm text-[var(--text-tertiary)]">to claim testnet tokens</p>
+                  </div>
+                  <ConnectButton />
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>
-
-      {/* Connect wallet card — below the table */}
-      {!isLoading && !isConnected && (
-        <div className="flex justify-center -mt-24 relative z-10">
-          <div className="flex flex-col items-center gap-6 bg-[rgba(8,12,28,0.45)] backdrop-blur-lg border border-white/[0.06] rounded-2xl w-full max-w-md px-10 py-10">
-            <Image
-              src="/stylend-logo-blue.webp"
-              alt="Stylend"
-              width={48}
-              height={48}
-              className="rounded-full"
-            />
-            <div className="text-center">
-              <h3 className="text-base font-semibold text-[var(--text-primary)] mb-1">Connect your wallet</h3>
-              <p className="text-sm text-[var(--text-tertiary)]">to claim testnet tokens</p>
-            </div>
-            <ConnectButton />
-          </div>
-        </div>
-      )}
     </div>
   );
 }
