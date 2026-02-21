@@ -15,6 +15,6 @@ export const config = getDefaultConfig({
   chains: [arbitrumSepoliaCustom],
   ssr: true,
   transports: {
-    [arbitrumSepolia.id]: http("https://arbitrum-sepolia-rpc.publicnode.com"),
+    [arbitrumSepolia.id]: http(process.env.NEXT_PUBLIC_RPC_URL),
   },
 });
